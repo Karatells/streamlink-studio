@@ -89,6 +89,8 @@ function applyTheme() {
   document.documentElement.classList.toggle('dark', dark);
   $('#theme').textContent = THEME_ICON[th];
   $('#theme').title = t('theme_' + th);
+  const mt = document.querySelector('meta[name=theme-color]');
+  if (mt) mt.content = dark ? '#0f111a' : '#ffffff';
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
@@ -312,7 +314,7 @@ const NATIVE = ['mp4', 'm4v', 'webm', 'mov'];
 
 function recordingsView() {
   $('#view').innerHTML = `
-    <div class="row" style="margin-bottom:12px">
+    <div class="row filters" style="margin-bottom:12px">
       <input type="search" id="q" class="grow" placeholder="${esc(t('rec_search'))}" value="${esc(filter.q)}">
       <select id="st"></select>
       <label class="row small muted">${esc(t('rec_from'))} <input type="date" id="df" value="${filter.from}" style="width:auto"></label>
@@ -329,8 +331,8 @@ function recordingsView() {
     $('#tbl').innerHTML = rows.length ? `<table><thead><tr><th>${esc(t('col_name'))}</th><th>${esc(t('col_streamer'))}</th>
       <th class="num">${esc(t('col_size'))}</th><th class="num">${esc(t('col_date'))}</th><th></th></tr></thead><tbody>
       ${rows.map((r) => `<tr><td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
-        <td>${esc(r.streamer)}</td><td class="num">${fmtSize(r.size)}</td>
-        <td class="num">${new Date(r.mod_time).toLocaleString()}</td>
+        <td data-label="${esc(t('col_streamer'))}">${esc(r.streamer)}</td><td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
+        <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.mod_time).toLocaleString()}</td>
         <td><div class="actions">
           <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
           ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
@@ -406,12 +408,11 @@ function trimModal(rec) {
       <div class="result" id="tnote" hidden>${esc(t('rec_not_native'))}</div>
       <div class="timeline" id="tl"><div class="track"></div><div class="sel"></div><div class="head"></div>
         <input type="range" id="rin" min="0" max="1" step="0.01" value="0"><input type="range" id="rout" min="0" max="1" step="0.01" value="1"></div>
-      <div class="row">
-        <span class="lbl">${esc(t('trim_in'))}</span><input type="text" class="timeinput" id="tin" value="00:00:00.000">
-        <button class="btn sm" id="setin">${esc(t('trim_set_in'))}</button>
-        <span class="grow"></span>
-        <button class="btn sm" id="setout">${esc(t('trim_set_out'))}</button>
-        <input type="text" class="timeinput" id="tout" value="00:00:00.000"><span class="lbl">${esc(t('trim_out'))}</span>
+      <div class="trimbar">
+        <div class="trimrow"><span class="lbl">${esc(t('trim_in'))}</span><input type="text" class="timeinput" id="tin" value="00:00:00.000">
+          <button class="btn sm" id="setin">${esc(t('trim_set_in'))}</button></div>
+        <div class="trimrow"><span class="lbl">${esc(t('trim_out'))}</span><input type="text" class="timeinput" id="tout" value="00:00:00.000">
+          <button class="btn sm" id="setout">${esc(t('trim_set_out'))}</button></div>
       </div>
       <div class="muted small">${esc(t('trim_duration'))}: <b id="tdur">–</b></div>
       <div class="field"><span class="lbl">${esc(t('trim_mode'))}</span>
