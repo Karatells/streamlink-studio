@@ -49,6 +49,8 @@ type Runtime struct {
 	Error     string
 	LastCheck time.Time
 	Title     string
+	Streams   []string // stream names offered at the last successful live check
+	StreamsAt time.Time
 	checking  bool
 	suppress  bool // manually stopped: do not auto-restart until the stream goes offline
 	rec       *Rec
@@ -61,6 +63,8 @@ type CheckResult struct {
 	Title     string   `json:"title"`
 	Error     string   `json:"error"`
 	AuthError bool     `json:"auth_error"`
+	Requested string   `json:"requested,omitempty"` // quality setting of the channel
+	Resolved  string   `json:"resolved,omitempty"`  // stream that would actually be recorded
 }
 
 type Manager struct {
@@ -195,6 +199,7 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 	switch {
 	case res.Live:
 		rt.Title = res.Title
+		rt.Streams, rt.StreamsAt = res.Streams, time.Now()
 		rt.Status = StatusLive
 		start := ch.AutoRecord && !rt.suppress
 		m.mu.Unlock()
@@ -449,7 +454,24 @@ func (m *Manager) StartRecording(id string) error {
 	}
 	rt.suppress = false
 	title := rt.Title
+	streams, streamsAt := rt.Streams, rt.StreamsAt
 	m.mu.Unlock()
+
+	// Stream names (and therefore the frame rate) come from the last live check;
+	// if that is stale, ask streamlink again so "720p" maps to 720p or 720p60.
+	if len(streams) == 0 || time.Since(streamsAt) > 2*time.Minute {
+		cctx, ccancel := context.WithTimeout(context.Background(), 45*time.Second)
+		if res := m.check(cctx, ch); res.Live {
+			streams = res.Streams
+			if res.Title != "" {
+				title = res.Title
+			}
+		}
+		ccancel()
+	}
+	spec := m.effectiveQuality(ch)
+	choice := resolveQuality(spec, streams)
+	log.Printf("[%s] quality %q -> %q (offered: %s)", streamerName(ch), spec, choice.Arg, strings.Join(streams, ", "))
 
 	if err := ensureDir(m.cfg.RecDir); err != nil {
 		return err
@@ -463,14 +485,17 @@ func (m *Manager) StartRecording(id string) error {
 		return err
 	}
 	tmp := strings.TrimSuffix(final, filepath.Ext(final)) + ".ts"
-	quality := m.effectiveQuality(ch)
+	quality := choice.Name
+	if quality == "" {
+		quality = spec
+	}
 
 	args, cleanup, err := m.buildArgs(ch)
 	if err != nil {
 		_ = os.Remove(filepath.Join(m.cfg.RecDir, tmp))
 		return err
 	}
-	args = append(args, "--force", "-o", filepath.Join(m.cfg.RecDir, tmp), ch.URL, quality)
+	args = append(args, "--force", "-o", filepath.Join(m.cfg.RecDir, tmp), ch.URL, choice.Arg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, m.streamlinkBin(), args...)

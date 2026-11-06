@@ -70,12 +70,13 @@ type ChannelView struct {
 	HasCookies       bool   `json:"has_cookies"`
 	AuthActive       bool   `json:"auth_active"`
 
-	Status         string     `json:"status"`
-	Error          string     `json:"error,omitempty"`
-	Title          string     `json:"title,omitempty"`
-	LastCheck      *time.Time `json:"last_check,omitempty"`
-	RecordingSince *time.Time `json:"recording_since,omitempty"`
-	RecordingFile  string     `json:"recording_file,omitempty"`
+	Status           string     `json:"status"`
+	Error            string     `json:"error,omitempty"`
+	Title            string     `json:"title,omitempty"`
+	LastCheck        *time.Time `json:"last_check,omitempty"`
+	RecordingSince   *time.Time `json:"recording_since,omitempty"`
+	RecordingQuality string     `json:"recording_quality,omitempty"`
+	RecordingFile    string     `json:"recording_file,omitempty"`
 }
 
 func (a *API) view(ch Channel) ChannelView {
@@ -101,6 +102,7 @@ func (a *API) view(ch Channel) ChannelView {
 			t := rt.rec.Started
 			v.RecordingSince = &t
 			v.RecordingFile = rt.rec.TmpName
+			v.RecordingQuality = rt.rec.Quality
 		}
 	}
 	a.m.mu.Unlock()
@@ -371,7 +373,12 @@ func (a *API) testChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 100*time.Second)
 	defer cancel()
-	writeJSON(w, 200, a.m.check(ctx, ch))
+	res := a.m.check(ctx, ch)
+	if res.Live { // show which stream would be recorded for the configured quality
+		res.Requested = a.m.effectiveQuality(ch)
+		res.Resolved = resolveQuality(res.Requested, res.Streams).Name
+	}
+	writeJSON(w, 200, res)
 }
 
 func (a *API) channelAction(act string) http.HandlerFunc {

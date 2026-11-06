@@ -55,7 +55,7 @@
   "ch_name": "Display name",
   "ch_name_hint": "optional, defaults to the name in the URL",
   "ch_quality": "Quality",
-  "ch_quality_hint": "e.g. best, 1080p60, 720p, worst — or a fallback list: 1080p60,720p,best",
+  "ch_quality_hint": "Write just the height, e.g. 720p: on a 60 fps stream 720p60 is picked automatically, on a 30 fps stream plain 720p. 720p60 / 720p30 prefer that frame rate. If the height is not offered, the nearest lower one is used. Lists work too: 1080p,720p,best",
   "ch_auto": "Auto Record",
   "ch_interval": "Check interval (seconds)",
   "ch_interval_hint": "0 = use the default; minimum 15",
@@ -158,5 +158,6 @@
   "sort_date_asc": "Oldest first",
   "sort_name": "File name",
   "sort_streamer": "Streamer",
-  "sort_size": "Largest first"
+  "sort_size": "Largest first",
+  "test_resolved": "→ will record: {resolved} (setting: {requested})"
 }

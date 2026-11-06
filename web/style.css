@@ -103,7 +103,7 @@ fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 12px 1
 legend { padding: 0 6px; color: var(--muted); font-weight: 600; font-size: 12.5px; }
 details summary { cursor: pointer; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.result { padding: 10px 12px; border-radius: 8px; background: var(--panel2); font-size: 13px; word-break: break-word; }
+.result { white-space: pre-line; padding: 10px 12px; border-radius: 8px; background: var(--panel2); font-size: 13px; word-break: break-word; }
 
 video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; }
 

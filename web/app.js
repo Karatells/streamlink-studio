@@ -177,7 +177,7 @@ function channelsView() {
     $('#active').innerHTML = act.length
       ? act.map((c) => `<div class="active-row">
           <span class="badge recording">LIVE</span><b>${esc(c.display_name)}</b>
-          <span class="muted">${esc(c.quality || settings.default_quality || 'best')}</span>
+          <span class="muted">${esc(c.recording_quality || c.quality || settings.default_quality || 'best')}</span>
           ${c.auth_active ? `<span class="badge ok">🔑 ${esc(t('auth_active'))}</span>` : ''}
           <span class="muted small">${esc(t('recording_for'))} ${fmtDur((Date.now() - new Date(c.recording_since)) / 1000)}</span>
           <span class="grow"></span>
@@ -215,6 +215,7 @@ function channelModal(ch) {
       <div class="field"><label>${esc(t('ch_name'))}</label><input type="text" id="f-name" value="${esc(ch.name)}" placeholder="${esc(t('ch_name_hint'))}"></div>
       <div class="field"><label>${esc(t('ch_quality'))}</label><input type="text" id="f-quality" value="${esc(ch.quality)}" placeholder="${esc(settings.default_quality || 'best')}" title="${esc(t('ch_quality_hint'))}"></div>
     </div>
+    <div class="muted small" style="margin-top:-6px">${esc(t('ch_quality_hint'))}</div>
     <label class="check"><input type="checkbox" id="f-auto" ${ch.auto_record ? 'checked' : ''}> ${esc(t('ch_auto'))}</label>
     <fieldset id="twitch-box"><legend>${esc(t('ch_auth'))} (Twitch)</legend>
       <label class="check"><input type="radio" name="authmode" value="global" ${ch.auth_mode !== 'custom' ? 'checked' : ''}> ${esc(t('auth_global'))}</label>
@@ -293,7 +294,8 @@ function channelModal(ch) {
     const body = collect();
     if (!isNew) body.id = ch.id;
     const r = await api('POST', '/channels/test', body);
-    if (r.live) box.textContent = '🟢 ' + t('test_live', { streams: r.streams.join(', ') || 'best' }) + (r.title ? ` — ${r.title}` : '') + (r.plugin ? ` [${r.plugin}]` : '');
+    if (r.live) box.textContent = '🟢 ' + t('test_live', { streams: r.streams.join(', ') || 'best' }) + (r.title ? ` — ${r.title}` : '') + (r.plugin ? ` [${r.plugin}]` : '')
+      + (r.resolved ? '\n' + t('test_resolved', { resolved: r.resolved, requested: r.requested }) : '');
     else if (r.auth_error) box.textContent = '🔴 ' + t('test_auth_error', { error: r.error });
     else if (r.error) box.textContent = '🔴 ' + t('test_error', { error: r.error });
     else box.textContent = '⚪ ' + t('test_offline');
@@ -497,7 +499,7 @@ function settingsView() {
       </fieldset>
       <fieldset class="card"><legend>${esc(t('set_defaults'))}</legend>
         <div class="two">
-          <div class="field"><label>${esc(t('set_def_quality'))}</label><input type="text" id="s-q" value="${esc(settings.default_quality)}"></div>
+          <div class="field"><label>${esc(t('set_def_quality'))}</label><input type="text" id="s-q" value="${esc(settings.default_quality)}"><span class="muted small">${esc(t('ch_quality_hint'))}</span></div>
           <div class="field"><label>${esc(t('set_def_interval'))}</label><input type="number" min="15" id="s-iv" value="${settings.default_interval}"></div>
         </div>
         <div class="field"><label>${esc(t('set_def_template'))}</label><input type="text" id="s-tpl" value="${esc(settings.default_template)}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>

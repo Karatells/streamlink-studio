@@ -57,6 +57,25 @@ With `STUDIO_USER`/`STUDIO_PASS` set, the panel shows a login page (en/uk/ru, da
 * **Scripts:** HTTP Basic (`curl -u user:pass ...`) is still accepted by the API.
 * To change the password edit `/etc/streamlink-studio.env` and `systemctl restart streamlink-studio`.
 
+## Quality selection (frame-rate aware)
+
+Streamlink names streams `720p` up to 30 fps and `720p60` above that, so a broadcast offers *either* one.
+Studio asks streamlink which streams the channel really offers and resolves your setting against that list
+when the recording starts:
+
+| Setting | 60 fps stream | 30 fps stream |
+|---|---|---|
+| `720p` | `720p60` | `720p` |
+| `720p60` | `720p60` | `720p` (same height) |
+| `720p30` | `720p60` (only variant) | `720p` |
+| `900p` (not offered) | nearest lower height | nearest lower height |
+| `1080p,720p,best` | first height that exists | first height that exists |
+
+* If both variants of a height exist, the higher fps wins unless you ask for `720p30`; `_alt` duplicates are never preferred.
+* If the requested height is missing, the nearest **lower** one is used (then the nearest higher), so "720p" works as a cap.
+* `best`, `worst` and plain names (`audio_only`, `source`, …) work as before; `best` is always appended as a safety net.
+* **Test Stream** shows the offered streams and which one will be recorded; running recordings show the actual stream.
+
 ## Notes
 
 * **Cookies:** streamlink has no `--http-cookies-file`; Studio converts the uploaded Netscape `cookies.txt`
