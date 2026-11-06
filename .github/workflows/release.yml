@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    branches: [main]      # -> rolling "nightly" pre-release
+    tags: ["v*"]          # v1.2.3 = stable, v1.2.3-beta.1 = beta (pre-release)
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24" }
+      - name: Vet
+        run: go vet ./...
+      - name: Build archives
+        run: make release VERSION="${GITHUB_REF_NAME}-${GITHUB_SHA::7}"
+        if: github.ref_type == 'branch'
+      - name: Build archives (tag)
+        run: make release VERSION="${GITHUB_REF_NAME}"
+        if: github.ref_type == 'tag'
+
+      - name: Publish nightly
+        if: github.ref_type == 'branch'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly dist/* --prerelease --target "$GITHUB_SHA" \
+            --title "Nightly ($(date -u +%F))" --notes "Automatic build of main @ ${GITHUB_SHA::7}"
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          flag=""; case "$GITHUB_REF_NAME" in *-*) flag="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* $flag --generate-notes
