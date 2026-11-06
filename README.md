@@ -39,10 +39,23 @@ Requires Go ≥ 1.24, plus `streamlink` and `ffmpeg`/`ffprobe` on `PATH`. **No t
 | `STUDIO_ADDR` | `-addr` | `:8080` |
 | `STUDIO_DATA` | `-data` | `./data` |
 | `STUDIO_RECORDINGS` | `-rec` | `<data>/recordings` |
-| `STUDIO_USER` / `STUDIO_PASS` | – | unset = **no password** |
+| `STUDIO_USER` / `STUDIO_PASS` | – | enables the login page; unset = **no password** |
 | `STREAMLINK_BIN` / `FFMPEG_BIN` | – | from `PATH` (also settable in the UI) |
 
-> The panel stores tokens and cookies. Set `STUDIO_USER`/`STUDIO_PASS` or put it behind a TLS reverse proxy.
+> The panel stores tokens and cookies. Set `STUDIO_USER`/`STUDIO_PASS` and put it behind a TLS reverse proxy.
+
+## Sign-in
+
+With `STUDIO_USER`/`STUDIO_PASS` set, the panel shows a login page (en/uk/ru, dark/light).
+
+* **Remembered login:** "Remember me" (on by default) keeps you signed in for 30 days (sliding renewal); without it the
+  session lasts until the browser is closed (max 12 h). Sessions are stored server-side in `<data>/sessions.json`
+  (token hashes only, mode `0600`), so they **survive restarts and updates**. The cookie is `HttpOnly`, `SameSite=Lax`
+  and `Secure` behind HTTPS (`X-Forwarded-Proto`).
+* **Brute-force protection:** 5 wrong attempts lock the client IP for 5 minutes (behind a local reverse proxy the
+  `X-Forwarded-For` / `X-Real-IP` header is used). Cross-origin state-changing requests are rejected.
+* **Scripts:** HTTP Basic (`curl -u user:pass ...`) is still accepted by the API.
+* To change the password edit `/etc/streamlink-studio.env` and `systemctl restart streamlink-studio`.
 
 ## Notes
 

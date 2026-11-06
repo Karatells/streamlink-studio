@@ -61,8 +61,9 @@ func main() {
 		log.Fatal(err)
 	}
 	static := http.FileServer(http.FS(sub))
-	api := &API{m: m}
-	handler := basicAuth(os.Getenv("STUDIO_USER"), os.Getenv("STUDIO_PASS"), api.Routes(static))
+	auth := NewAuth(os.Getenv("STUDIO_USER"), os.Getenv("STUDIO_PASS"), cfg.DataDir)
+	api := &API{m: m, auth: auth}
+	handler := auth.Middleware(api.Routes(static))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -71,7 +72,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Printf("Streamlink Studio %s listening on %s (data: %s, recordings: %s)", version, cfg.Addr, cfg.DataDir, cfg.RecDir)
-		if os.Getenv("STUDIO_USER") == "" && os.Getenv("STUDIO_PASS") == "" {
+		if !auth.Enabled() {
 			log.Println("WARNING: no STUDIO_USER/STUDIO_PASS set - the panel is open to anyone who can reach it")
 		}
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

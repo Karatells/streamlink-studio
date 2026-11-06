@@ -138,5 +138,19 @@
   "set_tools_hint": "Leave empty to use the binaries from PATH.",
   "set_about": "About",
   "tool_found": "found",
-  "tool_missing": "NOT FOUND"
+  "tool_missing": "NOT FOUND",
+
+  "login_title": "Sign in",
+  "login_subtitle": "Control panel for stream monitoring and recording",
+  "login_username": "Username",
+  "login_password": "Password",
+  "login_remember": "Remember me for 30 days",
+  "login_submit": "Sign in",
+  "login_show": "Show password",
+  "login_hide": "Hide password",
+  "login_error": "Wrong username or password.",
+  "login_locked": "Too many attempts. Try again in {minutes} min.",
+  "login_network": "Cannot reach the server. Check your connection.",
+  "login_empty": "Enter your username and password.",
+  "logout": "Sign out"
 }

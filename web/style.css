@@ -228,3 +228,36 @@ input, select, textarea, .btn { max-width: 100%; }
   .topbar .spacer { display: none; }
   .topbar select#lang { flex: none; width: 120px; }
 }
+
+/* ------------------------------------------------------ login page */
+.logo.big { width: 30px; height: 30px; border-radius: 9px; }
+.logo.big::after { inset: 10px; }
+.login-body { min-height: 100dvh; }
+.login-wrap {
+  min-height: 100dvh; display: grid; place-items: center;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(900px 500px at 15% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+    radial-gradient(700px 420px at 100% 110%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%),
+    var(--bg);
+}
+.login-body:not(.ready) .login-card { opacity: 0; }
+.login-card { width: 100%; max-width: 400px; padding: 30px 28px 22px; display: flex; flex-direction: column; gap: 14px; transition: opacity .2s; }
+.login-brand { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 17px; }
+.login-card h1 { margin: 8px 0 0; font-size: 26px; line-height: 1.15; }
+.login-sub { margin: -8px 0 4px; }
+.login-card form { display: flex; flex-direction: column; gap: 14px; }
+.login-card input[type=text], .login-card input[type=password] { padding: 11px 12px; font-size: 16px; }
+.pw { position: relative; }
+.pw input { padding-right: 46px !important; }
+.eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; display: grid; place-items: center; background: none; border: 0; color: var(--muted); border-radius: 8px; cursor: pointer; }
+.eye:hover, .eye:focus-visible { color: var(--text); background: var(--panel); outline: none; }
+.login-error { background: color-mix(in srgb, var(--bad) 14%, transparent); border: 1px solid var(--bad); color: var(--bad); padding: 10px 12px; border-radius: 8px; font-size: 13.5px; }
+.shake { animation: shake .35s; }
+@keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+.login-btn { width: 100%; min-height: 44px; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 9px; }
+.spin { width: 15px; height: 15px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: rot .7s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.login-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); margin-top: 4px; }
+.login-foot select { max-width: 60%; }
+@media (max-width: 420px) { .login-card { padding: 24px 18px 18px; } .login-card h1 { font-size: 24px; } }

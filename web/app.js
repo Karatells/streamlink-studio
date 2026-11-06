@@ -39,6 +39,7 @@ async function api(method, path, body, raw) {
     opt.headers['Content-Type'] = raw ? 'text/plain' : 'application/json';
   }
   const r = await fetch('api' + path, opt);
+  if (r.status === 401) { location.href = 'login.html'; throw new Error('unauthorized'); }
   if (r.status === 204) return null;
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.statusText);
@@ -89,6 +90,8 @@ function applyTheme() {
   document.documentElement.classList.toggle('dark', dark);
   $('#theme').textContent = THEME_ICON[th];
   $('#theme').title = t('theme_' + th);
+  $('#logout').title = t('logout');
+  $('#logout').setAttribute('aria-label', t('logout'));
   const mt = document.querySelector('meta[name=theme-color]');
   if (mt) mt.content = dark ? '#0f111a' : '#ffffff';
 }
@@ -545,6 +548,14 @@ window.addEventListener('hashchange', route);
     localStorage.setItem('theme', THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
     applyTheme();
   };
+  try { // show the sign-out button only when the panel is password protected
+    const a = await (await fetch('api/auth/status')).json();
+    if (a.auth_required) {
+      if (!a.authenticated) { location.href = 'login.html'; return; }
+      $('#logout').hidden = false;
+      $('#logout').onclick = async () => { try { await fetch('api/logout', { method: 'POST' }); } finally { location.href = 'login.html'; } };
+    }
+  } catch { /* ignore */ }
   try { settings = await api('GET', '/settings'); } catch { /* ignore */ }
   try { state = await api('GET', '/state'); } catch { /* ignore */ }
   await setLang(detectLang());

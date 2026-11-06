@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,7 +17,8 @@ import (
 )
 
 type API struct {
-	m *Manager
+	m    *Manager
+	auth *Auth
 }
 
 // ------------------------------------------------------------- helpers
@@ -617,6 +617,9 @@ func (a *API) trimRec(w http.ResponseWriter, r *http.Request) {
 // Routes builds the HTTP handler (API + embedded UI).
 func (a *API) Routes(static http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/auth/status", a.auth.status)
+	mux.HandleFunc("POST /api/login", a.auth.login)
+	mux.HandleFunc("/api/logout", a.auth.logout)
 	mux.HandleFunc("GET /api/state", a.state)
 	mux.HandleFunc("GET /api/version", a.version)
 	mux.HandleFunc("GET /api/settings", a.getSettings)
@@ -644,25 +647,4 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Handle("/", static)
 	return mux
-}
-
-// basicAuth protects the panel when STUDIO_USER / STUDIO_PASS are set.
-func basicAuth(user, pass string, next http.Handler) http.Handler {
-	if user == "" && pass == "" {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Streamlink Studio"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
