@@ -15,6 +15,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; }
+body { overflow-x: clip; } /* safety net: never scroll sideways */
 html { -webkit-text-size-adjust: 100%; }
 button, a.btn, select, input { touch-action: manipulation; }
 img, video { max-width: 100%; }
@@ -200,4 +201,30 @@ video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; }
 @media (max-width: 380px) {
   .brand span:last-child { font-size: 14px; }
   select#lang { max-width: 120px; }
+}
+
+/* ---------------------------------------------- overflow hardening */
+/* grid/flex items default to min-width:auto and refuse to shrink below their
+   longest unbreakable word (URLs, long names, error messages) -> let them shrink */
+.grid > *, .card, .ch > *, .head > *, .kv > *, .active-row > *, .field, .modal, .modal .body > *, fieldset, details, .row > * { min-width: 0; }
+fieldset { min-inline-size: 0; max-width: 100%; }
+.card, .modal, .result, .errtxt, .muted, .kv, .active-row, .toast, label, legend, summary, .badge { overflow-wrap: anywhere; }
+.kv { flex-wrap: wrap; }
+.ch .name { max-width: 100%; }
+.badge { max-width: 100%; }
+input, select, textarea, .btn { max-width: 100%; }
+@media (max-width: 720px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .overlay { overflow-x: hidden; }
+  .modal .body { min-width: 0; }
+  .badge { white-space: normal; text-align: left; }
+  .active-row > b { overflow-wrap: anywhere; }
+  .ch .row .btn { min-width: 0; white-space: normal; }
+}
+@media (max-width: 720px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar .brand { flex: 1 1 0; min-width: 0; }
+  .topbar .brand span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .spacer { display: none; }
+  .topbar select#lang { flex: none; width: 120px; }
 }
