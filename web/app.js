@@ -312,7 +312,7 @@ function channelModal(ch) {
 }
 
 /* ---------------------------------------------------- recordings view */
-const filter = { q: '', streamer: '', from: '', to: '' };
+const filter = { q: '', streamer: '', from: '', to: '', sort: 'date_desc' };
 const NATIVE = ['mp4', 'm4v', 'webm', 'mov'];
 
 function recordingsView() {
@@ -320,6 +320,7 @@ function recordingsView() {
     <div class="row filters" style="margin-bottom:12px">
       <input type="search" id="q" class="grow" placeholder="${esc(t('rec_search'))}" value="${esc(filter.q)}">
       <select id="st"></select>
+      <select id="so">${['date_desc', 'date_asc', 'name', 'streamer', 'size'].map((k) => `<option value="${k}" ${filter.sort === k ? 'selected' : ''}>${esc(t('sort_' + k))}</option>`).join('')}</select>
       <label class="row small muted">${esc(t('rec_from'))} <input type="date" id="df" value="${filter.from}" style="width:auto"></label>
       <label class="row small muted">${esc(t('rec_to'))} <input type="date" id="dt" value="${filter.to}" style="width:auto"></label>
     </div>
@@ -330,12 +331,20 @@ function recordingsView() {
     const q = filter.q.toLowerCase();
     const rows = recs.filter((r) =>
       (!q || r.name.toLowerCase().includes(q)) && (!filter.streamer || r.streamer === filter.streamer) &&
-      (!filter.from || ymd(new Date(r.mod_time)) >= filter.from) && (!filter.to || ymd(new Date(r.mod_time)) <= filter.to));
+      (!filter.from || ymd(new Date(r.started)) >= filter.from) && (!filter.to || ymd(new Date(r.started)) <= filter.to));
+    const cmp = {
+      date_desc: (a, b) => new Date(b.started) - new Date(a.started),
+      date_asc: (a, b) => new Date(a.started) - new Date(b.started),
+      name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }),
+      streamer: (a, b) => a.streamer.localeCompare(b.streamer) || new Date(b.started) - new Date(a.started),
+      size: (a, b) => b.size - a.size,
+    }[filter.sort] || (() => 0);
+    rows.sort(cmp);
     $('#tbl').innerHTML = rows.length ? `<table><thead><tr><th>${esc(t('col_name'))}</th><th>${esc(t('col_streamer'))}</th>
       <th class="num">${esc(t('col_size'))}</th><th class="num">${esc(t('col_date'))}</th><th></th></tr></thead><tbody>
       ${rows.map((r) => `<tr><td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
-        <td data-label="${esc(t('col_streamer'))}">${esc(r.streamer)}</td><td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
-        <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.mod_time).toLocaleString()}</td>
+        <td data-label="${esc(t('col_streamer'))}">${esc(r.streamer)}${r.platform ? ` <span class="muted small">· ${esc(r.platform)}</span>` : ''}</td><td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
+        <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
         <td><div class="actions">
           <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
           ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
@@ -365,6 +374,7 @@ function recordingsView() {
   };
   $('#q').oninput = (e) => { filter.q = e.target.value; render(); };
   $('#st').onchange = (e) => { filter.streamer = e.target.value; render(); };
+  $('#so').onchange = (e) => { filter.sort = e.target.value; render(); };
   $('#df').onchange = (e) => { filter.from = e.target.value; render(); };
   $('#dt').onchange = (e) => { filter.to = e.target.value; render(); };
   $('#tbl').addEventListener('click', guard(async (e) => {

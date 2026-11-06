@@ -152,5 +152,11 @@
   "login_locked": "Too many attempts. Try again in {minutes} min.",
   "login_network": "Cannot reach the server. Check your connection.",
   "login_empty": "Enter your username and password.",
-  "logout": "Sign out"
+  "logout": "Sign out",
+
+  "sort_date_desc": "Newest first",
+  "sort_date_asc": "Oldest first",
+  "sort_name": "File name",
+  "sort_streamer": "Streamer",
+  "sort_size": "Largest first"
 }

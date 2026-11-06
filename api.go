@@ -130,18 +130,25 @@ type RecInfo struct {
 	Name      string    `json:"name"`
 	Size      int64     `json:"size"`
 	ModTime   time.Time `json:"mod_time"`
+	Started   time.Time `json:"started"` // recording start (metadata > date in name > mtime)
 	Streamer  string    `json:"streamer"`
+	Platform  string    `json:"platform"`
+	Title     string    `json:"title,omitempty"`
 	Ext       string    `json:"ext"`
 	Recording bool      `json:"recording"`
 }
 
+// listRecordings builds the library. Streamer / platform / start time come from
+// the metadata saved when the recording started, so they do not depend on the
+// file-name template. Files without metadata fall back to guessLegacy.
 func (a *API) listRecordings() []RecInfo {
 	entries, _ := os.ReadDir(a.m.cfg.RecDir)
-	var names []string
-	for _, c := range a.m.st.Channels() {
-		names = append(names, sanitizeFilename(streamerName(c)))
+	channels := a.m.st.Channels()
+	byID := map[string]Channel{}
+	for _, c := range channels {
+		byID[c.ID] = c
 	}
-	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	metas := a.m.meta.snapshot()
 	out := []RecInfo{}
 	for _, e := range entries {
 		if e.IsDir() || !isMediaFile(e.Name()) || strings.HasPrefix(e.Name(), ".") {
@@ -151,20 +158,22 @@ func (a *API) listRecordings() []RecInfo {
 		if err != nil {
 			continue
 		}
-		st := ""
-		for _, n := range names {
-			if strings.HasPrefix(e.Name(), n+"_") || strings.HasPrefix(e.Name(), n+".") {
-				st = n
-				break
+		ri := RecInfo{Name: e.Name(), Size: fi.Size(), ModTime: fi.ModTime(),
+			Ext: strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name())), "."), Recording: a.m.ActiveFile(e.Name())}
+		if md, ok := metas[e.Name()]; ok && md.Streamer != "" {
+			ri.Streamer, ri.Platform, ri.Title, ri.Started = md.Streamer, md.Platform, md.Title, md.Started
+			if c, ok := byID[md.ChannelID]; ok { // follow channel renames
+				ri.Streamer = streamerName(c)
 			}
+		} else {
+			ri.Streamer, ri.Platform, ri.Started = guessLegacy(e.Name(), fi.ModTime(), channels)
 		}
-		if st == "" {
-			st, _, _ = strings.Cut(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())), "_")
+		if ri.Started.IsZero() {
+			ri.Started = fi.ModTime()
 		}
-		out = append(out, RecInfo{e.Name(), fi.Size(), fi.ModTime(), st,
-			strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name())), "."), a.m.ActiveFile(e.Name())})
+		out = append(out, ri)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
 	return out
 }
 
@@ -578,6 +587,7 @@ func (a *API) deleteRec(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	a.m.meta.remove(filepath.Base(p))
 	w.WriteHeader(http.StatusNoContent)
 }
 

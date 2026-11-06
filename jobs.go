@@ -135,6 +135,7 @@ func (m *Manager) Convert(name string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.meta.copy(name, outName)
 	j := m.newJob("remux", name, outName)
 	snap := *j
 	m.wg.Add(1)
@@ -174,6 +175,7 @@ func (m *Manager) Trim(name string, start, end float64, mode string) (*Job, erro
 		args = []string{"-ss", ss, "-to", to, "-i", in, "-map", "0:v?", "-map", "0:a?", "-c", "copy",
 			"-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out}
 	}
+	m.meta.copy(name, outName)
 	j := m.newJob("trim", name, outName)
 	snap := *j
 	m.wg.Add(1)

@@ -69,12 +69,15 @@ type Manager struct {
 	mu   sync.Mutex
 	rt   map[string]*Runtime
 	jobs []*Job
+	meta *metaStore
 	wg   sync.WaitGroup
 	ctx  context.Context
 }
 
 func NewManager(cfg Config, st *Store) *Manager {
-	return &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}}
+	ms := openMeta(filepath.Join(cfg.DataDir, "recordings.json"))
+	ms.pruneMissing(cfg.RecDir)
+	return &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
 }
 
 func (m *Manager) streamlinkBin() string {
@@ -484,6 +487,13 @@ func (m *Manager) StartRecording(id string) error {
 	rec := &Rec{ChannelID: id, TmpName: tmp, Final: final, Started: time.Now(), Quality: quality,
 		cancel: cancel, done: make(chan struct{})}
 
+	plugin := ch.Plugin
+	if plugin == "" {
+		plugin = detectPlatform(ch.URL)
+	}
+	m.meta.set([]string{tmp, final}, RecMeta{ChannelID: ch.ID, Streamer: streamerName(ch), Platform: plugin,
+		Title: title, Quality: quality, Started: rec.Started})
+
 	m.mu.Lock()
 	rt = m.rtLocked(id)
 	rt.rec = rec
@@ -538,16 +548,22 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 
 	if size == 0 {
 		_ = os.Remove(tmpPath)
+		m.meta.remove(rec.TmpName, rec.Final)
 		return
 	}
 	if filepath.Ext(rec.Final) == ".ts" || !m.st.Settings().RemuxAfter {
+		if rec.Final != rec.TmpName {
+			m.meta.remove(rec.Final) // the file stays a .ts
+		}
 		return // remux disabled (or .ts requested): keep the raw .ts file
 	}
 	// remux .ts -> final container, then drop the .ts
 	j := m.newJob("remux", rec.TmpName, rec.Final)
 	if err := m.runFFmpeg(j, remuxArgs(tmpPath, filepath.Join(m.cfg.RecDir, rec.Final)), tmpPath, 0); err == nil {
 		_ = os.Remove(tmpPath)
+		m.meta.remove(rec.TmpName)
 	} else {
+		m.meta.remove(rec.Final)
 		log.Printf("[%s] remux failed, keeping %s: %v", streamerName(ch), rec.TmpName, err)
 	}
 }
