@@ -12,12 +12,34 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 )
 
 // version is overridden at build time: -ldflags "-X main.version=v1.0.0"
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "" // -ldflags "-X main.commit=<sha>"
+)
+
+// currentCommit returns the commit this binary was built from.
+func currentCommit() string {
+	if commit != "" {
+		return commit
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+	}
+	return ""
+}
+
+// requestShutdown asks the process to stop gracefully (same path as SIGTERM).
+func requestShutdown() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) }
 
 //go:embed all:web
 var webFS embed.FS
@@ -37,7 +59,15 @@ func main() {
 	flag.StringVar(&cfg.RecDir, "rec", os.Getenv("STUDIO_RECORDINGS"), "recordings directory (env STUDIO_RECORDINGS, default <data>/recordings)")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("streamlink-studio", version)
+		c := currentCommit()
+		if len(c) > 7 {
+			c = c[:7]
+		}
+		if c != "" {
+			fmt.Printf("streamlink-studio %s (%s)\n", version, c)
+		} else {
+			fmt.Println("streamlink-studio", version)
+		}
 		return
 	}
 	if cfg.RecDir == "" {
@@ -62,12 +92,14 @@ func main() {
 	}
 	static := http.FileServer(http.FS(sub))
 	auth := NewAuth(os.Getenv("STUDIO_USER"), os.Getenv("STUDIO_PASS"), cfg.DataDir)
-	api := &API{m: m, auth: auth}
+	upd := NewUpdater(m)
+	api := &API{m: m, auth: auth, upd: upd}
 	handler := auth.Middleware(api.Routes(static))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go m.Run(ctx)
+	go upd.Run(ctx)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -86,4 +118,8 @@ func main() {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(sctx)
+	if restartRequested.Load() {
+		log.Println("restarting after update")
+		os.Exit(restartExitCode)
+	}
 }

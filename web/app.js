@@ -98,14 +98,23 @@ function applyTheme() {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
 /* -------------------------------------------------------------- state */
-let state = { channels: [], active: [], jobs: [], counts: { channels: 0, recordings: 0 } };
+let state = { channels: [], active: [], jobs: [], counts: { channels: 0, recordings: 0 }, update: { available: false } };
 let settings = {};
 let recs = [];
 let current = null; // current view object
 
 function renderShell() {
   const names = { channels: t('nav_channels') + ` (${state.counts.channels})`, recordings: t('nav_recordings') + ` (${state.counts.recordings})`, settings: t('nav_settings') };
-  $$('#nav a').forEach((a) => (a.textContent = names[a.dataset.route]));
+  const upd = state.update?.available;
+  $$('#nav a').forEach((a) => {
+    a.textContent = names[a.dataset.route];
+    if (a.dataset.route === 'settings' && upd) a.insertAdjacentHTML('beforeend', '<i class="dot"></i>');
+  });
+  const bn = $('#update-banner');
+  if (bn) {
+    bn.hidden = !upd || /^#\/settings\/updates/.test(location.hash);
+    if (!bn.hidden) bn.innerHTML = `<span>⬆ ${esc(t('upd_banner', { version: state.update.version }))}</span> <a class="btn sm primary" href="#/settings/updates">${esc(t('upd_banner_view'))}</a>`;
+  }
   applyTheme();
 }
 
@@ -478,15 +487,44 @@ function trimModal(rec) {
 }
 
 /* ------------------------------------------------------ settings view */
-function settingsView() {
-  $('#view').innerHTML = `<div class="loading muted">${esc(t('loading'))}</div>`;
+const SET_TABS = ['general', 'auth', 'tools', 'updates'];
+const settingsTabLabel = (k) => t('set_tab_' + k);
+
+function settingsView(tab) {
+  tab = SET_TABS.includes(tab) ? tab : 'general';
+  const alive = { stop: false, timers: [] };
+  const view = { destroy() { alive.stop = true; alive.timers.forEach(clearTimeout); } };
+  $('#view').innerHTML = `<div class="settings">
+    <h2>${esc(t('set_title'))}</h2>
+    <div class="tabs" role="tablist">${SET_TABS.map((k) => `<a role="tab" href="#/settings/${k}" class="tab${k === tab ? ' active' : ''}" aria-selected="${k === tab}">${esc(settingsTabLabel(k))}${k === 'updates' && state.update?.available ? '<i class="dot"></i>' : ''}</a>`).join('')}</div>
+    <div id="stab" class="stab"><div class="loading muted">${esc(t('loading'))}</div></div></div>`;
+  const body = $('#stab');
   (async () => {
     settings = await api('GET', '/settings');
+    if (alive.stop) return;
+    if (tab === 'updates') return updatesTab(body, alive);
     const ver = await api('GET', '/version');
-    const tool = (name, x) => `<span class="badge ${x.found ? 'ok' : 'error'}">${esc(name)}: ${x.found ? esc(t('tool_found')) + ' — ' + esc(x.version || '') : esc(t('tool_missing'))}</span>`;
-    $('#view').innerHTML = `<div style="max-width:720px;display:flex;flex-direction:column;gap:18px">
-      <h2 style="margin-bottom:-6px">${esc(t('set_title'))}</h2>
-      <fieldset class="card"><legend>${esc(t('set_global_auth'))}</legend>
+    if (alive.stop) return;
+    const v = (id) => $(id).value;
+    const saveBar = `<div class="row"><button class="btn primary" id="s-save">${esc(t('save'))}</button></div>`;
+    const save = (collect) => ($('#s-save').onclick = guard(async () => {
+      const b = collect();
+      settings = await api('PUT', '/settings', b);
+      toast(t('saved')); settingsView(tab);
+    }));
+    const reload = guard(async () => settingsView(tab));
+    if (tab === 'general') {
+      body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_defaults'))}</legend>
+        <div class="two">
+          <div class="field"><label>${esc(t('set_def_quality'))}</label><input type="text" id="s-q" value="${esc(settings.default_quality)}"><span class="muted small">${esc(t('ch_quality_hint'))}</span></div>
+          <div class="field"><label>${esc(t('set_def_interval'))}</label><input type="number" min="15" id="s-iv" value="${settings.default_interval}"></div>
+        </div>
+        <div class="field"><label>${esc(t('set_def_template'))}</label><input type="text" id="s-tpl" value="${esc(settings.default_template)}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>
+        <label class="check"><input type="checkbox" id="s-remux" ${settings.remux_after ? 'checked' : ''}> ${esc(t('set_remux'))}</label>
+      </fieldset>${saveBar}`;
+      save(() => ({ default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60, default_template: v('#s-tpl'), remux_after: $('#s-remux').checked }));
+    } else if (tab === 'auth') {
+      body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_global_auth'))}</legend>
         <div class="field"><label>${esc(t('set_twitch_token'))}</label>
           <div class="row"><input type="password" id="s-token" class="grow" autocomplete="off" placeholder="${settings.has_twitch_token ? esc(t('token_keep')) : ''}">
           ${settings.has_twitch_token ? `<button class="btn sm danger" id="s-token-clear">${esc(t('remove_cookies'))}</button>` : ''}</div></div>
@@ -496,55 +534,145 @@ function settingsView() {
             ${settings.has_cookies ? `<button class="btn sm danger" id="s-ck-rm">${esc(t('remove_cookies'))}</button>` : ''}
             <input type="file" id="s-ck-file" accept=".txt,text/plain" hidden></div></div>
         <div class="field"><label>${esc(t('set_proxy'))}</label><input type="text" id="s-proxy" value="${esc(settings.proxy)}" placeholder="http://user:pass@host:port"></div>
-      </fieldset>
-      <fieldset class="card"><legend>${esc(t('set_defaults'))}</legend>
-        <div class="two">
-          <div class="field"><label>${esc(t('set_def_quality'))}</label><input type="text" id="s-q" value="${esc(settings.default_quality)}"><span class="muted small">${esc(t('ch_quality_hint'))}</span></div>
-          <div class="field"><label>${esc(t('set_def_interval'))}</label><input type="number" min="15" id="s-iv" value="${settings.default_interval}"></div>
-        </div>
-        <div class="field"><label>${esc(t('set_def_template'))}</label><input type="text" id="s-tpl" value="${esc(settings.default_template)}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>
-        <label class="check"><input type="checkbox" id="s-remux" ${settings.remux_after ? 'checked' : ''}> ${esc(t('set_remux'))}</label>
-      </fieldset>
-      <fieldset class="card"><legend>${esc(t('set_tools'))}</legend>
+      </fieldset>${saveBar}`;
+      save(() => { const b = { proxy: v('#s-proxy') }; if (v('#s-token')) b.twitch_token = v('#s-token'); return b; });
+      const clr = $('#s-token-clear');
+      if (clr) clr.onclick = guard(async () => { await api('PUT', '/settings', { twitch_token: '' }); reload(); });
+      $('#s-ck-up').onclick = () => $('#s-ck-file').click();
+      $('#s-ck-file').onchange = guard(async (e) => {
+        const f = e.target.files[0];
+        if (f) { await api('PUT', '/settings/cookies', await f.text(), true); toast(t('saved')); reload(); }
+      });
+      const rm = $('#s-ck-rm');
+      if (rm) rm.onclick = guard(async () => { await api('DELETE', '/settings/cookies'); reload(); });
+    } else {
+      const tool = (name, x) => `<span class="badge ${x.found ? 'ok' : 'error'}">${esc(name)}: ${x.found ? esc(t('tool_found')) + ' — ' + esc(x.version || '') : esc(t('tool_missing'))}</span>`;
+      body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_tools'))}</legend>
         <div class="row">${tool('streamlink', ver.streamlink)} ${tool('ffmpeg', ver.ffmpeg)}</div>
         <div class="two">
           <div class="field"><label>${esc(t('set_streamlink_path'))}</label><input type="text" id="s-sl" value="${esc(settings.streamlink_bin)}" placeholder="streamlink"></div>
           <div class="field"><label>${esc(t('set_ffmpeg_path'))}</label><input type="text" id="s-ff" value="${esc(settings.ffmpeg_bin)}" placeholder="ffmpeg"></div>
         </div><div class="muted small">${esc(t('set_tools_hint'))}</div>
-      </fieldset>
-      <div class="row"><button class="btn primary" id="s-save">${esc(t('save'))}</button>
-        <span class="grow"></span><span class="muted small">${esc(t('set_about'))}: Streamlink Studio ${esc(ver.version)} · ${esc(ver.os)}/${esc(ver.arch)} ·
-        <a href="https://github.com/Karatells/streamlink-studio" target="_blank" rel="noopener noreferrer">GitHub</a></span></div></div>`;
-    const v = (id) => $(id).value;
-    const reload = guard(async () => settingsView());
-    $('#s-save').onclick = guard(async () => {
-      const b = { proxy: v('#s-proxy'), default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60,
-        default_template: v('#s-tpl'), remux_after: $('#s-remux').checked, streamlink_bin: v('#s-sl'), ffmpeg_bin: v('#s-ff') };
-      if (v('#s-token')) b.twitch_token = v('#s-token');
-      settings = await api('PUT', '/settings', b);
-      toast(t('saved')); settingsView();
-    });
-    const clr = $('#s-token-clear');
-    if (clr) clr.onclick = guard(async () => { await api('PUT', '/settings', { twitch_token: '' }); reload(); });
-    $('#s-ck-up').onclick = () => $('#s-ck-file').click();
-    $('#s-ck-file').onchange = guard(async (e) => {
-      const f = e.target.files[0];
-      if (f) { await api('PUT', '/settings/cookies', await f.text(), true); toast(t('saved')); reload(); }
-    });
-    const rm = $('#s-ck-rm');
-    if (rm) rm.onclick = guard(async () => { await api('DELETE', '/settings/cookies'); reload(); });
+      </fieldset><div class="row">${'<button class="btn primary" id="s-save">' + esc(t('save')) + '</button>'}</div>`;
+      save(() => ({ streamlink_bin: v('#s-sl'), ffmpeg_bin: v('#s-ff') }));
+    }
   })().catch((e) => toast(e.message, true));
-  return {};
+  return view;
+}
+
+/* ------------------------------------------------------- updates tab */
+function updatesTab(body, alive) {
+  let st = null, busy = false, pollTimer = null;
+  const later = (fn, ms) => { const id = setTimeout(fn, ms); alive.timers.push(id); return id; };
+  const fmtDate = (d) => (d ? new Date(d).toLocaleString() : t('never'));
+  const chLabel = (c) => t('upd_ch_' + c);
+  const applying = () => ['downloading', 'verifying', 'installing', 'restarting'].includes(st.apply?.state);
+
+  async function load() { st = await api('GET', '/update'); if (!alive.stop) draw(); }
+
+  function draw() {
+    if (alive.stop || !st) return;
+    const cur = st.current, chk = st.check, ap = st.apply || {};
+    const latest = chk?.latest;
+    const installedDiffers = st.channel !== cur.installed_channel;
+    let status = '';
+    if (applying() || ap.state === 'restart_manual') {
+      const labels = { downloading: t('upd_state_downloading', { percent: ap.percent || 0 }), verifying: t('upd_state_verifying'), installing: t('upd_state_installing'), restarting: t('upd_state_restarting'), restart_manual: t('upd_manual_restart') };
+      status = `<div class="upd-card"><div class="upd-title">${esc(labels[ap.state])}</div>
+        ${ap.state === 'downloading' ? `<div class="progress"><i style="width:${ap.percent || 0}%"></i></div>` : ap.state === 'restart_manual' ? '' : '<div class="progress indeterminate"><i></i></div>'}</div>`;
+    } else if (!chk) {
+      status = `<div class="muted">${esc(t('upd_not_checked'))}</div>`;
+    } else if (chk.error) {
+      status = `<div class="upd-card bad">${esc(t('upd_check_failed'))}: ${esc(chk.error)}</div>`;
+    } else if (chk.available) {
+      status = `<div class="upd-card avail"><div class="upd-title">⬆ ${esc(t('upd_available', { version: latest.tag }))}</div>
+        <div class="muted small">${latest.published && !String(latest.published).startsWith('0001') ? esc(t('upd_published')) + ': ' + esc(fmtDate(latest.published)) + ' · ' : ''}<a href="${esc(latest.url)}" target="_blank" rel="noopener noreferrer">${esc(t('upd_release_page'))}</a></div>
+        ${latest.notes ? `<details class="notes"><summary>${esc(t('upd_notes'))}</summary><pre>${esc(latest.notes)}</pre></details>` : ''}
+        ${ap.state === 'error' ? `<div class="err">${esc(t('upd_error'))}: ${esc(ap.error)}</div>` : ''}
+        ${st.can_update ? `<div class="row"><button class="btn primary" id="u-apply">${esc(t('upd_apply'))}</button></div>`
+          : `<div class="warn-box"><b>${esc(t('upd_cannot_title'))}</b> ${esc(t('upd_reason_' + st.reason))}<div class="muted small">${esc(t('upd_run_command'))}</div>
+             <div class="cmd"><code id="u-cmd">${esc(st.command)}</code><button class="btn sm" id="u-copy">${esc(t('upd_copy'))}</button></div></div>`}
+      </div>`;
+    } else {
+      status = `<div class="upd-card ok">✓ ${esc(t('upd_up_to_date'))}</div>`;
+    }
+    body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_tab_updates'))}</legend>
+      <dl class="kv">
+        <dt>${esc(t('upd_current'))}</dt><dd>${esc(cur.version)}</dd>
+        ${cur.commit ? `<dt>${esc(t('upd_commit'))}</dt><dd><code>${esc(cur.commit.slice(0, 7))}</code></dd>` : ''}
+        <dt>${esc(t('upd_installed_channel'))}</dt><dd>${esc(chLabel(cur.installed_channel))}</dd>
+        <dt>${esc(t('upd_last_checked'))}</dt><dd>${esc(chk ? fmtDate(chk.checked_at) : t('never'))}</dd>
+      </dl>
+      <div class="field"><label>${esc(t('upd_channel'))}</label>
+        <select id="u-ch">${['stable', 'beta', 'nightly'].map((c) => `<option value="${c}"${st.channel === c ? ' selected' : ''}>${esc(chLabel(c))}${c === cur.installed_channel ? ' ★' : ''}</option>`).join('')}</select>
+        <span class="muted small">${esc(t('upd_channel_hint'))}${installedDiffers ? ' ' + esc(t('upd_channel_differs', { channel: chLabel(cur.installed_channel) })) : ''}</span></div>
+      <label class="check"><input type="checkbox" id="u-auto" ${settings.update_auto ? 'checked' : ''}> ${esc(t('upd_auto'))}</label>
+      <div class="row"><button class="btn" id="u-check" ${applying() ? 'disabled' : ''}>${esc(t('upd_check'))}</button></div>
+    </fieldset>${status}`;
+    $('#u-check').onclick = guard(async () => {
+      const b = $('#u-check'); b.disabled = true; b.textContent = t('upd_checking');
+      st = await api('POST', '/update/check'); draw();
+    });
+    $('#u-ch').onchange = guard(async (e) => {
+      settings = await api('PUT', '/settings', { update_channel: e.target.value });
+      st = await api('POST', '/update/check'); draw(); refresh();
+    });
+    $('#u-auto').onchange = guard(async (e) => { settings = await api('PUT', '/settings', { update_auto: e.target.checked }); toast(t('saved')); });
+    const ap_ = $('#u-apply');
+    if (ap_) ap_.onclick = guard(async () => {
+      const n = state.active?.length || 0;
+      if (!confirm(t('upd_apply_confirm', { version: latest.tag }) + (n ? '\n\n' + t('upd_apply_recordings', { count: n }) : ''))) return;
+      st = await api('POST', '/update/apply'); draw(); watch();
+    });
+    const cp = $('#u-copy');
+    if (cp) cp.onclick = async () => {
+      try { await navigator.clipboard.writeText(st.command); toast(t('upd_copied')); }
+      catch { const r = document.createRange(); r.selectNodeContents($('#u-cmd')); getSelection().removeAllRanges(); getSelection().addRange(r); }
+    };
+  }
+
+  // follow the progress; after the restart wait for the new version and reload
+  function watch() {
+    clearTimeout(pollTimer);
+    const tick = async () => {
+      if (alive.stop) return;
+      try {
+        const prevVersion = st.current.version, prevCommit = st.current.commit;
+        if (st.apply?.state === 'restarting' || st._down) {
+          const v = await fetch('api/version', { cache: 'no-store' });
+          if (v.ok) {
+            const j = await v.json();
+            if (j.version !== prevVersion || (j.commit || '') !== (prevCommit || '')) { location.reload(); return; }
+          }
+        } else {
+          const next = await api('GET', '/update');
+          next._down = false; st = next; draw();
+        }
+      } catch {
+        // the server is restarting: keep waiting for it to come back
+        st._down = true;
+        if (st.apply) st.apply.state = 'restarting';
+        draw();
+      }
+      if (['downloading', 'verifying', 'installing', 'restarting'].includes(st.apply?.state) || st._down) pollTimer = later(tick, 1200);
+    };
+    pollTimer = later(tick, 800);
+  }
+
+  load().then(() => { if (st && applying()) watch(); }).catch((e) => toast(e.message, true));
 }
 
 /* -------------------------------------------------------------- router */
 const views = { channels: channelsView, recordings: recordingsView, settings: settingsView };
 function route() {
-  const name = (location.hash.match(/^#\/(\w+)/) || [])[1];
+  const m = location.hash.match(/^#\/(\w+)(?:\/(\w+))?/) || [];
+  const name = m[1];
   const key = views[name] ? name : 'channels';
+  if (current?.destroy) current.destroy();
+  renderShell();
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === key));
   closeModal();
-  current = views[key]();
+  current = views[key](m[2]);
   if (current.update) current.update();
 }
 window.addEventListener('hashchange', route);

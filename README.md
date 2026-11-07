@@ -26,6 +26,23 @@ verifies the download checksum, swaps the binary atomically (keeping `.prev` for
 restarts the service. Updates never touch `/var/lib/streamlink-studio` (database, cookies, recordings).
 `--uninstall [--purge]` removes it.
 
+## Settings & updates
+
+Settings are split into tabs (`#/settings/general|auth|tools|updates`): **General** (defaults for new channels),
+**Authorization** (Twitch token, global cookies, proxy), **Tools** (streamlink/ffmpeg paths and status) and **Updates**.
+
+* **Update check** looks at the channel the program was installed from (`STUDIO_CHANNEL`, written by `install.sh`;
+  inferred from the version if absent). You can pick another channel on the Updates tab; the installed one is marked ★.
+  `stable` = latest release, `beta` = newest version incl. pre-releases, `nightly` = rolling build of `main` (compared by commit).
+  Checks run automatically every 6 hours (can be switched off) and manually with a button; a dot on *Settings* and a banner
+  show when an update is available.
+* **One-button update** downloads `streamlink-studio_linux_<arch>.tar.gz`, **refuses to continue without a matching
+  `checksums.txt` entry**, test-runs the new binary, keeps the old one as `streamlink-studio.prev`, swaps the file and
+  restarts (active recordings are stopped and saved first; the page reloads when the new version is up).
+  The restart needs systemd (`install.sh` sets `Restart=always` and gives the service user write access to the install
+  directory). Older installs or other setups see the manual `install.sh --update` command instead – run it once to enable the button.
+* `STUDIO_UPDATE_REPO` / `STUDIO_UPDATE_API` override the GitHub repository / API base (forks, tests).
+
 ## Run from source
 
 ```bash
@@ -40,6 +57,7 @@ Requires Go ≥ 1.24, plus `streamlink` and `ffmpeg`/`ffprobe` on `PATH`. **No t
 | `STUDIO_DATA` | `-data` | `./data` |
 | `STUDIO_RECORDINGS` | `-rec` | `<data>/recordings` |
 | `STUDIO_USER` / `STUDIO_PASS` | – | enables the login page; unset = **no password** |
+| `STUDIO_CHANNEL` | – | `stable`/`beta`/`nightly`: installed channel (set by `install.sh`) |
 | `STREAMLINK_BIN` / `FFMPEG_BIN` | – | from `PATH` (also settable in the UI) |
 
 > The panel stores tokens and cookies. Set `STUDIO_USER`/`STUDIO_PASS` and put it behind a TLS reverse proxy.
@@ -100,5 +118,5 @@ Copy `web/locales/en.json` to `web/locales/es.json`, translate it, and register 
 
 ## Roadmap
 
-GitHub-API update check with a one-click update button, Twitch token validation, Telegram/Discord
+Twitch token validation, Telegram/Discord
 notifications, upload to Google Drive / S3, automatic cleanup when the disk fills up.

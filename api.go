@@ -17,6 +17,7 @@ import (
 )
 
 type API struct {
+	upd  *Updater
 	m    *Manager
 	auth *Auth
 }
@@ -119,11 +120,13 @@ type SettingsView struct {
 	RemuxAfter      bool   `json:"remux_after"`
 	StreamlinkBin   string `json:"streamlink_bin"`
 	FFmpegBin       string `json:"ffmpeg_bin"`
+	UpdateChannel   string `json:"update_channel"` // "" = installed channel
+	UpdateAuto      bool   `json:"update_auto"`
 }
 
 func settingsView(s Settings) SettingsView {
 	return SettingsView{s.TwitchToken != "", s.HasCookies, s.Proxy, s.DefaultQuality, s.DefaultInterval,
-		s.DefaultTemplate, s.RemuxAfter, s.StreamlinkBin, s.FFmpegBin}
+		s.DefaultTemplate, s.RemuxAfter, s.StreamlinkBin, s.FFmpegBin, s.UpdateChannel, !s.UpdateCheckOff}
 }
 
 // ----------------------------------------------------------- recordings
@@ -200,8 +203,12 @@ func (a *API) state(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	upd := map[string]any{"available": false}
+	if c, ok := a.upd.Cached(); ok && c.Available && c.Latest != nil {
+		upd = map[string]any{"available": true, "version": c.Latest.Tag}
+	}
 	writeJSON(w, 200, map[string]any{"channels": views, "active": active, "jobs": a.m.Jobs(),
-		"counts": map[string]int{"channels": len(views), "recordings": n}})
+		"counts": map[string]int{"channels": len(views), "recordings": n}, "update": upd})
 }
 
 type ChannelInput struct {
@@ -488,6 +495,8 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		RemuxAfter      *bool   `json:"remux_after"`
 		StreamlinkBin   *string `json:"streamlink_bin"`
 		FFmpegBin       *string `json:"ffmpeg_bin"`
+		UpdateChannel   *string `json:"update_channel"`
+		UpdateAuto      *bool   `json:"update_auto"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -522,6 +531,20 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if in.FFmpegBin != nil {
 		s.FFmpegBin = strings.TrimSpace(*in.FFmpegBin)
 	}
+	if in.UpdateChannel != nil {
+		c := strings.ToLower(strings.TrimSpace(*in.UpdateChannel))
+		if c != "" && !validChannel(c) {
+			writeErr(w, errBad("update channel must be stable, beta or nightly"))
+			return
+		}
+		if c != s.UpdateChannel {
+			s.UpdateChannel = c
+			a.upd.Invalidate()
+		}
+	}
+	if in.UpdateAuto != nil {
+		s.UpdateCheckOff = !*in.UpdateAuto
+	}
 	if err := a.m.st.SetSettings(s); err != nil {
 		writeErr(w, err)
 		return
@@ -539,7 +562,7 @@ func (a *API) version(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"found": true, "version": lastLineFirst(string(out))}
 	}
 	writeJSON(w, 200, map[string]any{
-		"version": version, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
+		"version": version, "commit": currentCommit(), "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
 		"streamlink": tool(a.m.streamlinkBin(), "--version"),
 		"ffmpeg":     tool(a.m.ffmpegBin(), "-version"),
 	})
@@ -639,6 +662,18 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("/api/logout", a.auth.logout)
 	mux.HandleFunc("GET /api/state", a.state)
 	mux.HandleFunc("GET /api/version", a.version)
+	mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.upd.Status()) })
+	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		a.upd.Check(r.Context(), true)
+		writeJSON(w, 200, a.upd.Status())
+	})
+	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
+		if err := a.upd.Apply(); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 202, a.upd.Status())
+	})
 	mux.HandleFunc("GET /api/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/settings", a.putSettings)
 	mux.HandleFunc("PUT /api/settings/cookies", a.putCookies(true))

@@ -100,6 +100,11 @@ if [ "$ACTION" = update ] && [ ! -x "${INSTALL_DIR}/${APP}" ]; then
 fi
 
 # ----------------------------------------------------------------- channel
+# on update, keep the channel the program was installed from (recorded in the env file)
+if [ -z "$CHANNEL" ] && [ "$ACTION" = update ] && [ -r "$ENV_FILE" ]; then
+  CHANNEL="$(grep -E '^STUDIO_CHANNEL=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  case "$CHANNEL" in stable|beta|nightly) info "Using the installed channel: ${CHANNEL}" ;; *) CHANNEL="" ;; esac
+fi
 if [ -z "$CHANNEL" ]; then
   if [ -r /dev/tty ]; then
     echo "Release channel:  1) stable   2) beta   3) nightly (main branch)"
@@ -152,12 +157,16 @@ case "$CHANNEL" in
   stable)  TAG="$(curl -fsSL "${API}/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')" \
              || die "no stable release found" ;;
   beta)    TAG="$(curl -fsSL "${API}/releases?per_page=30" | python3 -c '
-import json,sys
+import json,re,sys
+best=None
 for r in json.load(sys.stdin):
-    if r.get("prerelease") and r["tag_name"] != "nightly":
-        print(r["tag_name"]); break
-else:
-    sys.exit(1)')" || die "no beta (pre-release) found" ;;
+    m=re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:-(.+))?$", r["tag_name"])
+    if r.get("draft") or not m: continue
+    # a release sorts above its own pre-releases
+    k=(int(m[1]),int(m[2]),int(m[3]),m[4] is None,m[4] or "")
+    if best is None or k>best[0]: best=(k,r["tag_name"])
+if not best: sys.exit(1)
+print(best[1])')" || die "no beta (pre-release) found" ;;
   nightly) TAG="nightly" ;;
 esac
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
@@ -193,6 +202,9 @@ fi
 [ -f "${INSTALL_DIR}/${APP}" ] && cp -f "${INSTALL_DIR}/${APP}" "${INSTALL_DIR}/${APP}.prev"
 install -m 0755 "${TMP}/${APP}" "${INSTALL_DIR}/${APP}.new"
 mv -f "${INSTALL_DIR}/${APP}.new" "${INSTALL_DIR}/${APP}"
+# the service user owns the install dir (not the venv) so the in-app "Update" button can swap the binary
+chown "${SVC_USER}:${SVC_USER}" "$INSTALL_DIR" "${INSTALL_DIR}/${APP}"
+[ -f "${INSTALL_DIR}/${APP}.prev" ] && chown "${SVC_USER}:${SVC_USER}" "${INSTALL_DIR}/${APP}.prev"
 
 if [ ! -f "$ENV_FILE" ]; then
   umask 077
@@ -209,6 +221,13 @@ if [ ! -f "$ENV_FILE" ]; then
   [ -z "$AUTH_USER" ] && warn "The panel has NO password. Set STUDIO_USER / STUDIO_PASS in ${ENV_FILE} or bind to localhost behind a reverse proxy."
 fi
 
+# remember the channel the program was installed from (used by the in-app update check)
+if grep -q '^STUDIO_CHANNEL=' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s/^STUDIO_CHANNEL=.*/STUDIO_CHANNEL=${CHANNEL}/" "$ENV_FILE"
+else
+  echo "STUDIO_CHANNEL=${CHANNEL}" >> "$ENV_FILE"
+fi
+
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Streamlink Studio
@@ -222,7 +241,7 @@ EnvironmentFile=${ENV_FILE}
 Environment=PATH=${VENV}/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=${DATA_DIR}
 ExecStart=${INSTALL_DIR}/${APP}
-Restart=on-failure
+Restart=always
 RestartSec=5
 # give running recordings time to finish and be remuxed on stop
 TimeoutStopSec=60
@@ -230,7 +249,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=${DATA_DIR}
+ReadWritePaths=${DATA_DIR} ${INSTALL_DIR}
 
 [Install]
 WantedBy=multi-user.target

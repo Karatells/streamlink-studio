@@ -46,6 +46,8 @@ type Settings struct {
 	RemuxAfter      bool   `json:"remux_after"`
 	StreamlinkBin   string `json:"streamlink_bin"`
 	FFmpegBin       string `json:"ffmpeg_bin"`
+	UpdateChannel   string `json:"update_channel"`   // "" = the channel the program was installed from
+	UpdateCheckOff  bool   `json:"update_check_off"` // automatic checks disabled
 }
 
 type storeData struct {

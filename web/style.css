@@ -261,3 +261,33 @@ input, select, textarea, .btn { max-width: 100%; }
 .login-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); margin-top: 4px; }
 .login-foot select { max-width: 60%; }
 @media (max-width: 420px) { .login-card { padding: 24px 18px 18px; } .login-card h1 { font-size: 24px; } }
+
+/* ---- settings tabs & updates ---- */
+.settings { max-width: 760px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.settings h2 { margin: 0; }
+.stab { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { position: relative; padding: 9px 14px; color: var(--muted); text-decoration: none; font-weight: 600; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-left: 6px; vertical-align: middle; }
+.update-banner { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.update-banner .btn.primary { background: var(--accent-text); color: var(--accent); border-color: transparent; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0 0 6px; }
+.kv dt { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.upd-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.upd-card.avail { border-color: var(--accent); }
+.upd-card.ok { color: var(--ok, #3fb950); }
+.upd-card.bad, .err { color: var(--bad); overflow-wrap: anywhere; }
+.upd-title { font-weight: 700; font-size: 16px; }
+.notes pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font: inherit; font-size: 13px; max-height: 260px; overflow: auto; }
+.notes summary { cursor: pointer; font-weight: 600; }
+.warn-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.cmd { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; word-break: break-all; background: var(--panel2); padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.progress { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.progress.indeterminate > i { width: 35%; animation: slide 1.2s infinite ease-in-out; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
