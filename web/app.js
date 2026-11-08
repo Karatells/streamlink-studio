@@ -98,13 +98,13 @@ function applyTheme() {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
 /* -------------------------------------------------------------- state */
-let state = { channels: [], active: [], jobs: [], counts: { channels: 0, recordings: 0 }, update: { available: false } };
+let state = { channels: [], active: [], jobs: [], counts: { channels: 0, recordings: 0, saved: 0 }, update: { available: false } };
 let settings = {};
 let recs = [];
 let current = null; // current view object
 
 function renderShell() {
-  const names = { channels: t('nav_channels') + ` (${state.counts.channels})`, recordings: t('nav_recordings') + ` (${state.counts.recordings})`, settings: t('nav_settings') };
+  const names = { channels: t('nav_channels') + ` (${state.counts.channels})`, recordings: t('nav_recordings') + ` (${state.counts.recordings})`, saved: t('nav_saved') + ` (${state.counts.saved || 0})`, settings: t('nav_settings') };
   const upd = state.update?.available;
   $$('#nav a').forEach((a) => {
     a.textContent = names[a.dataset.route];
@@ -323,25 +323,53 @@ function channelModal(ch) {
 }
 
 /* ---------------------------------------------------- recordings view */
-const filter = { q: '', streamer: '', from: '', to: '', sort: 'date_desc' };
-const NATIVE = ['mp4', 'm4v', 'webm', 'mov'];
+const filters = {
+  all: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
+  saved: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
+};
 
-function recordingsView() {
+function dayLabel(key) { // key = yyyy-mm-dd
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const now = new Date();
+  if (key === ymd(now)) return t('rec_today');
+  const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (key === ymd(yest)) return t('rec_yesterday');
+  const opt = { weekday: 'long', day: 'numeric', month: 'long' };
+  if (y !== now.getFullYear()) opt.year = 'numeric';
+  const s = date.toLocaleDateString(lang, opt);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function recordingsView(savedMode) {
+  const filter = savedMode ? filters.saved : filters.all;
+  const sel = new Set();          // selected file names
+  const collapsed = new Set();    // collapsed group keys
+  let visible = [];               // names in display order (for shift-click ranges)
+  let lastIdx = -1;
+  let lastSig = '';
   $('#view').innerHTML = `
-    <div class="row filters" style="margin-bottom:12px">
+    <div class="row filters" style="margin-bottom:8px">
       <input type="search" id="q" class="grow" placeholder="${esc(t('rec_search'))}" value="${esc(filter.q)}">
       <select id="st"></select>
       <select id="so">${['date_desc', 'date_asc', 'name', 'streamer', 'size'].map((k) => `<option value="${k}" ${filter.sort === k ? 'selected' : ''}>${esc(t('sort_' + k))}</option>`).join('')}</select>
       <label class="row small muted">${esc(t('rec_from'))} <input type="date" id="df" value="${filter.from}" style="width:auto"></label>
       <label class="row small muted">${esc(t('rec_to'))} <input type="date" id="dt" value="${filter.to}" style="width:auto"></label>
     </div>
-    <div class="card" style="padding:4px 8px"><div id="tbl"></div></div>
+    <div id="chips" class="chips"></div>
+    <div id="tbl"></div>
     <div class="muted small" id="sum" style="margin-top:8px"></div>
+    <div id="bulk" class="bulkbar" hidden></div>
     <div id="jobs-wrap"></div>`;
-  const render = () => {
+
+  const byName = () => new Map(recs.map((r) => [r.name, r]));
+  const selectable = (r) => !r.recording;
+  const selRecs = () => { const m = byName(); return [...sel].map((n) => m.get(n)).filter(Boolean); };
+
+  const filtered = () => {
     const q = filter.q.toLowerCase();
     const rows = recs.filter((r) =>
-      (!q || r.name.toLowerCase().includes(q)) && (!filter.streamer || r.streamer === filter.streamer) &&
+      (!q || r.name.toLowerCase().includes(q) || r.streamer.toLowerCase().includes(q)) && (!filter.streamer || r.streamer === filter.streamer) &&
       (!filter.from || ymd(new Date(r.started)) >= filter.from) && (!filter.to || ymd(new Date(r.started)) <= filter.to));
     const cmp = {
       date_desc: (a, b) => new Date(b.started) - new Date(a.started),
@@ -350,28 +378,93 @@ function recordingsView() {
       streamer: (a, b) => a.streamer.localeCompare(b.streamer) || new Date(b.started) - new Date(a.started),
       size: (a, b) => b.size - a.size,
     }[filter.sort] || (() => 0);
-    rows.sort(cmp);
-    $('#tbl').innerHTML = rows.length ? `<table><thead><tr><th>${esc(t('col_name'))}</th><th>${esc(t('col_streamer'))}</th>
-      <th class="num">${esc(t('col_size'))}</th><th class="num">${esc(t('col_date'))}</th><th></th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
-        <td data-label="${esc(t('col_streamer'))}">${esc(r.streamer)}${r.platform ? ` <span class="muted small">· ${esc(r.platform)}</span>` : ''}</td><td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
-        <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
-        <td><div class="actions">
-          <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
-          ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
-          ${r.recording ? '' : `<button class="btn sm" data-a="trim" data-n="${esc(r.name)}">✂ ${esc(t('rec_trim'))}</button>`}
-          <a class="btn sm" href="api/recordings/${enc(r.name)}/download" download>⬇</a>
-          ${r.recording ? '' : `<button class="btn sm danger" data-a="del" data-n="${esc(r.name)}">🗑</button>`}
-        </div></td></tr>`).join('')}</tbody></table>` : `<div class="empty">${esc(t('rec_none'))}</div>`;
-    $('#sum').textContent = t('rec_total', { count: rows.length, size: fmtSize(rows.reduce((a, r) => a + r.size, 0)) });
+    return rows.sort(cmp);
   };
+
+  // date sorts -> one group per day, "streamer" sort -> one group per streamer, others -> flat
+  const groupsOf = (rows) => {
+    if (filter.sort !== 'date_desc' && filter.sort !== 'date_asc' && filter.sort !== 'streamer') return [{ key: '', label: '', rows }];
+    const map = new Map();
+    for (const r of rows) {
+      const key = filter.sort === 'streamer' ? r.streamer : ymd(new Date(r.started));
+      if (!map.has(key)) map.set(key, { key, label: filter.sort === 'streamer' ? r.streamer : dayLabel(key), rows: [] });
+      map.get(key).rows.push(r);
+    }
+    return [...map.values()];
+  };
+
+  const rowHtml = (r) => `<tr class="${sel.has(r.name) ? 'selected' : ''}">
+    <td class="sel"><input type="checkbox" data-sel="${esc(r.name)}" aria-label="${esc(t('rec_select'))}" ${sel.has(r.name) ? 'checked' : ''} ${selectable(r) ? '' : 'disabled'}></td>
+    <td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
+    <td data-label="${esc(t('col_streamer'))}"><button class="nick${filter.streamer === r.streamer ? ' on' : ''}" data-a="streamer" data-n="${esc(r.streamer)}" title="${esc(t('rec_filter_streamer'))}">${esc(r.streamer)}</button>${r.platform ? ` <span class="muted small">· ${esc(r.platform)}</span>` : ''}</td>
+    <td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
+    <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
+    <td><div class="actions">
+      <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
+      ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
+      ${r.recording ? '' : `<button class="btn sm" data-a="trim" data-n="${esc(r.name)}">✂ ${esc(t('rec_trim'))}</button>`}
+      ${r.recording ? '' : `<button class="btn sm${r.saved ? ' on' : ''}" data-a="${r.saved ? 'unsave' : 'save'}" data-n="${esc(r.name)}">${r.saved ? '★ ' + esc(t('rec_unsave')) : '☆ ' + esc(t('rec_save'))}</button>`}
+      <a class="btn sm" href="api/recordings/${enc(r.name)}/download" download>⬇</a>
+      ${r.recording ? '' : `<button class="btn sm danger" data-a="del" data-n="${esc(r.name)}">🗑</button>`}
+    </div></td></tr>`;
+
+  const render = () => {
+    const rows = filtered();
+    visible = [];
+    const groups = groupsOf(rows);
+    $('#tbl').innerHTML = rows.length ? groups.map((g) => {
+      const open = !collapsed.has(g.key);
+      if (open) g.rows.forEach((r) => visible.push(r.name));
+      const sels = g.rows.filter(selectable);
+      const nSel = sels.filter((r) => sel.has(r.name)).length;
+      const head = g.label ? `<div class="grp-head" data-grp="${esc(g.key)}">
+        <input type="checkbox" data-grpsel="${esc(g.key)}" aria-label="${esc(t('rec_select_group'))}" ${sels.length ? '' : 'disabled'} ${nSel && nSel === sels.length ? 'checked' : ''}>
+        <button class="grp-title" data-a="toggle" data-g="${esc(g.key)}" aria-expanded="${open}"><span class="chev">${open ? '▾' : '▸'}</span> <b>${esc(g.label)}</b></button>
+        <span class="muted small">${esc(t('rec_group_info', { count: g.rows.length, size: fmtSize(g.rows.reduce((a, r) => a + r.size, 0)) }))}</span>
+        ${nSel ? `<span class="badge">${esc(t('rec_n_selected', { count: nSel }))}</span>` : ''}</div>` : '';
+      const table = open ? `<div class="card tblcard" style="padding:4px 8px"><table><thead><tr><th class="sel"></th><th>${esc(t('col_name'))}</th><th>${esc(t('col_streamer'))}</th>
+        <th class="num">${esc(t('col_size'))}</th><th class="num">${esc(t('col_date'))}</th><th></th></tr></thead><tbody>${g.rows.map(rowHtml).join('')}</tbody></table></div>` : '';
+      return `<section class="grp">${head}${table}</section>`;
+    }).join('') : `<div class="card"><div class="empty">${esc(t(savedMode ? 'rec_saved_none' : 'rec_none'))}</div></div>`;
+    // indeterminate state of the group checkboxes
+    $$('[data-grpsel]').forEach((cb) => {
+      const g = groups.find((x) => x.key === cb.dataset.grpsel);
+      const sels = g ? g.rows.filter(selectable) : [];
+      const n = sels.filter((r) => sel.has(r.name)).length;
+      cb.indeterminate = n > 0 && n < sels.length;
+    });
+    $('#sum').textContent = t('rec_total', { count: rows.length, size: fmtSize(rows.reduce((a, r) => a + r.size, 0)) });
+    renderChips(); renderBulk();
+  };
+
+  const renderChips = () => {
+    $('#chips').innerHTML = filter.streamer
+      ? `<span class="chip">👤 ${esc(filter.streamer)} <button data-a="clear-streamer" aria-label="${esc(t('close'))}">✕</button></span>` : '';
+  };
+
+  const renderBulk = () => {
+    const items = selRecs();
+    const bar = $('#bulk');
+    bar.hidden = items.length === 0;
+    if (!items.length) { bar.innerHTML = ''; return; }
+    const total = items.reduce((a, r) => a + r.size, 0);
+    bar.innerHTML = `<span class="bulk-info"><b>${esc(t('rec_n_selected', { count: items.length }))}</b> · ${fmtSize(total)}</span>
+      <span class="grow"></span>
+      <button class="btn sm" data-b="selall">${esc(t('rec_select_all'))}</button>
+      <button class="btn sm" data-b="merge" ${items.length < 2 ? 'disabled' : ''} title="${esc(items.length < 2 ? t('rec_merge_need_two') : '')}">⛓ ${esc(t('rec_merge'))}</button>
+      <button class="btn sm" data-b="${savedMode ? 'unsave' : 'save'}">${savedMode ? '★ ' + esc(t('rec_unsave')) : '☆ ' + esc(t('rec_save'))}</button>
+      <button class="btn sm danger" data-b="del">🗑 ${esc(t('delete'))}</button>
+      <button class="btn sm" data-b="clear">✕ ${esc(t('rec_clear_sel'))}</button>`;
+  };
+
   const renderStreamers = () => {
-    const sel = $('#st');
+    const sel_ = $('#st');
     const names = [...new Set(recs.map((r) => r.streamer))].sort();
     if (filter.streamer && !names.includes(filter.streamer)) filter.streamer = '';
     const html = `<option value="">${esc(t('rec_all_streamers'))}</option>` + names.map((n) => `<option ${n === filter.streamer ? 'selected' : ''} value="${esc(n)}">${esc(n)}</option>`).join('');
-    if (sel.innerHTML !== html) sel.innerHTML = html;
+    if (sel_.innerHTML !== html) sel_.innerHTML = html;
   };
+
   const renderJobs = () => {
     const jobs = state.jobs;
     $('#jobs-wrap').innerHTML = jobs.length ? `<h2>${esc(t('jobs_title'))}</h2><div class="card">${jobs.slice(0, 12).map((j) => {
@@ -383,28 +476,110 @@ function recordingsView() {
         ${j.error ? `<span class="errtxt">${esc(j.error)}</span>` : ''}</div>`;
     }).join('')}</div>` : '';
   };
+
+  const setStreamer = (name) => { filter.streamer = name; renderStreamers(); render(); };
   $('#q').oninput = (e) => { filter.q = e.target.value; render(); };
-  $('#st').onchange = (e) => { filter.streamer = e.target.value; render(); };
+  $('#st').onchange = (e) => setStreamer(e.target.value);
   $('#so').onchange = (e) => { filter.sort = e.target.value; render(); };
   $('#df').onchange = (e) => { filter.from = e.target.value; render(); };
   $('#dt').onchange = (e) => { filter.to = e.target.value; render(); };
+  $('#chips').addEventListener('click', (e) => { if (e.target.closest('[data-a=clear-streamer]')) setStreamer(''); });
+
+  // selection: single, shift-range and whole group
+  let shift = false; // the change event carries no modifier keys: take them from the click before it
+  $('#tbl').addEventListener('click', (e) => { shift = !!e.shiftKey; }, true);
+  $('#tbl').addEventListener('change', (e) => {
+    const cb = e.target;
+    if (cb.dataset.sel !== undefined) {
+      const name = cb.dataset.sel;
+      const idx = visible.indexOf(name);
+      if (shift && lastIdx >= 0 && idx >= 0) {
+        const [a, b] = [Math.min(lastIdx, idx), Math.max(lastIdx, idx)];
+        const m = byName();
+        for (const n of visible.slice(a, b + 1)) if (m.get(n) && selectable(m.get(n))) cb.checked ? sel.add(n) : sel.delete(n);
+      } else cb.checked ? sel.add(name) : sel.delete(name);
+      lastIdx = idx;
+      render();
+    } else if (cb.dataset.grpsel !== undefined) {
+      const g = groupsOf(filtered()).find((x) => x.key === cb.dataset.grpsel);
+      if (g) g.rows.filter(selectable).forEach((r) => (cb.checked ? sel.add(r.name) : sel.delete(r.name)));
+      render();
+    }
+  });
   $('#tbl').addEventListener('click', guard(async (e) => {
     const b = e.target.closest('[data-a]');
     if (!b) return;
     const name = b.dataset.n;
     const rec = recs.find((r) => r.name === name);
-    if (b.dataset.a === 'play') playerModal(rec);
-    if (b.dataset.a === 'trim') trimModal(rec);
-    if (b.dataset.a === 'conv') { await api('POST', `/recordings/${enc(name)}/convert`); refresh(); }
-    if (b.dataset.a === 'del') {
-      if (!confirm(t('confirm_delete_file', { name }))) return;
-      await api('DELETE', `/recordings/${enc(name)}`);
-      toast(t('deleted')); refresh();
+    switch (b.dataset.a) {
+      case 'toggle': collapsed.has(b.dataset.g) ? collapsed.delete(b.dataset.g) : collapsed.add(b.dataset.g); render(); break;
+      case 'streamer': setStreamer(filter.streamer === name ? '' : name); break;
+      case 'play': playerModal(rec); break;
+      case 'trim': trimModal(rec); break;
+      case 'conv': await api('POST', `/recordings/${enc(name)}/convert`); refresh(); break;
+      case 'save': case 'unsave':
+        await api('POST', '/recordings/save', { names: [name], saved: b.dataset.a === 'save' });
+        toast(t(b.dataset.a === 'save' ? 'rec_saved_toast' : 'rec_unsaved_toast')); refresh(); update(); break;
+      case 'del':
+        if (!confirm(t('confirm_delete_file', { name }))) return;
+        await api('DELETE', `/recordings/${enc(name)}`);
+        sel.delete(name); toast(t('deleted')); refresh(); update(); break;
     }
   }));
+
+  const mergeModal = (items) => {
+    const ordered = [...items].sort((a, b) => new Date(a.started) - new Date(b.started));
+    const exts = new Set(ordered.map((r) => r.ext));
+    const streamers = new Set(ordered.map((r) => r.streamer));
+    const total = ordered.reduce((a, r) => a + r.size, 0);
+    const mixed = exts.size > 1;
+    const m = openModal({
+      title: t('rec_merge_title'),
+      body: `<div class="muted small">${esc(t('rec_merge_hint'))}</div>
+        <ol class="mergelist">${ordered.map((r) => `<li><span class="name">${esc(r.name)}</span><span class="muted small">${esc(new Date(r.started).toLocaleString())} · ${fmtSize(r.size)}</span></li>`).join('')}</ol>
+        ${mixed ? `<div class="result error">${esc(t('rec_merge_mixed'))}</div>` : ''}
+        ${streamers.size > 1 ? `<div class="result">${esc(t('rec_merge_streamers'))}</div>` : ''}
+        <label class="check"><input type="checkbox" id="mdel"> ${esc(t('rec_merge_delete'))}</label>
+        <div class="muted small">${esc(t('rec_merge_total', { count: ordered.length, size: fmtSize(total) }))}</div>`,
+      footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="mgo" ${mixed ? 'disabled' : ''}>⛓ ${esc(t('rec_merge'))}</button>`,
+    });
+    $('#mgo', m).onclick = guard(async () => {
+      await api('POST', '/recordings/merge', { names: ordered.map((r) => r.name), delete_sources: $('#mdel', m).checked });
+      closeModal(); sel.clear(); toast(t('rec_merge_started')); refresh(); update();
+    });
+  };
+
+  $('#bulk').addEventListener('click', guard(async (e) => {
+    const b = e.target.closest('[data-b]');
+    if (!b) return;
+    const items = selRecs();
+    const names = items.map((r) => r.name);
+    switch (b.dataset.b) {
+      case 'clear': sel.clear(); render(); break;
+      case 'selall': filtered().filter(selectable).forEach((r) => sel.add(r.name)); render(); break;
+      case 'merge': mergeModal(items); break;
+      case 'save': case 'unsave':
+        await api('POST', '/recordings/save', { names, saved: b.dataset.b === 'save' });
+        sel.clear(); toast(t(b.dataset.b === 'save' ? 'rec_saved_toast_n' : 'rec_unsaved_toast_n', { count: names.length })); refresh(); update(); break;
+      case 'del': {
+        const hasSaved = items.some((r) => r.saved);
+        if (!confirm(t('confirm_delete_many', { count: names.length, size: fmtSize(items.reduce((a, r) => a + r.size, 0)) }) + (hasSaved && !savedMode ? '' : hasSaved ? '\n\n' + t('confirm_delete_saved') : ''))) return;
+        const res = await api('POST', '/recordings/delete', { names });
+        sel.clear();
+        toast(t('rec_deleted_n', { count: res.deleted.length }) + (res.failed.length ? ' · ' + t('rec_delete_failed', { count: res.failed.length }) : ''), res.failed.length > 0);
+        refresh(); update(); break;
+      }
+    }
+  }));
+
   const update = async () => {
-    recs = await api('GET', '/recordings');
-    renderStreamers(); render(); renderJobs();
+    const all = await api('GET', '/recordings');
+    recs = all.filter((r) => !!r.saved === !!savedMode);
+    const sig = JSON.stringify(recs);
+    const names = new Set(recs.map((r) => r.name));
+    for (const n of [...sel]) if (!names.has(n)) sel.delete(n); // files that vanished
+    renderStreamers(); renderJobs();
+    if (sig !== lastSig) { lastSig = sig; render(); }
   };
   update().catch(() => {});
   return { update };
@@ -663,7 +838,7 @@ function updatesTab(body, alive) {
 }
 
 /* -------------------------------------------------------------- router */
-const views = { channels: channelsView, recordings: recordingsView, settings: settingsView };
+const views = { channels: channelsView, recordings: () => recordingsView(false), saved: () => recordingsView(true), settings: settingsView };
 function route() {
   const m = location.hash.match(/^#\/(\w+)(?:\/(\w+))?/) || [];
   const name = m[1];

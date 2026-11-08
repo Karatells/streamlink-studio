@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,15 +24,25 @@ type RecMeta struct {
 
 // metaStore is a small JSON index: file name -> RecMeta.
 type metaStore struct {
-	mu   sync.Mutex
-	path string
-	data map[string]RecMeta
+	mu        sync.Mutex
+	path      string
+	data      map[string]RecMeta
+	savedPath string
+	saved     map[string]bool // recordings the user moved to the "Saved" tab
 }
 
 func openMeta(path string) *metaStore {
-	ms := &metaStore{path: path, data: map[string]RecMeta{}}
+	ms := &metaStore{path: path, data: map[string]RecMeta{}, savedPath: filepath.Join(filepath.Dir(path), "saved.json"), saved: map[string]bool{}}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &ms.data)
+	}
+	if b, err := os.ReadFile(ms.savedPath); err == nil {
+		var names []string
+		if json.Unmarshal(b, &names) == nil {
+			for _, n := range names {
+				ms.saved[n] = true
+			}
+		}
 	}
 	return ms
 }
@@ -45,6 +56,42 @@ func (ms *metaStore) saveLocked() {
 	if os.WriteFile(tmp, b, 0o640) == nil {
 		_ = os.Rename(tmp, ms.path)
 	}
+}
+
+func (ms *metaStore) saveSavedLocked() {
+	names := make([]string, 0, len(ms.saved))
+	for n := range ms.saved {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	b, err := json.Marshal(names)
+	if err != nil {
+		return
+	}
+	tmp := ms.savedPath + ".tmp"
+	if os.WriteFile(tmp, b, 0o640) == nil {
+		_ = os.Rename(tmp, ms.savedPath)
+	}
+}
+
+// setSaved marks / unmarks recordings as saved.
+func (ms *metaStore) setSaved(names []string, v bool) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	for _, n := range names {
+		if v {
+			ms.saved[n] = true
+		} else {
+			delete(ms.saved, n)
+		}
+	}
+	ms.saveSavedLocked()
+}
+
+func (ms *metaStore) isSaved(name string) bool {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.saved[name]
 }
 
 func (ms *metaStore) set(names []string, v RecMeta) {
@@ -78,15 +125,22 @@ func (ms *metaStore) copy(src, dst string) {
 func (ms *metaStore) remove(names ...string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	changed := false
+	changed, savedChanged := false, false
 	for _, n := range names {
 		if _, ok := ms.data[n]; ok {
 			delete(ms.data, n)
 			changed = true
 		}
+		if ms.saved[n] {
+			delete(ms.saved, n)
+			savedChanged = true
+		}
 	}
 	if changed {
 		ms.saveLocked()
+	}
+	if savedChanged {
+		ms.saveSavedLocked()
 	}
 }
 
@@ -94,15 +148,24 @@ func (ms *metaStore) remove(names ...string) {
 func (ms *metaStore) pruneMissing(dir string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	changed := false
+	changed, savedChanged := false, false
 	for n := range ms.data {
 		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
 			delete(ms.data, n)
 			changed = true
 		}
 	}
+	for n := range ms.saved {
+		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
+			delete(ms.saved, n)
+			savedChanged = true
+		}
+	}
 	if changed {
 		ms.saveLocked()
+	}
+	if savedChanged {
+		ms.saveSavedLocked()
 	}
 }
 
