@@ -189,3 +189,42 @@ func TestConcatQuote(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestStats(t *testing.T) {
+	a, rec := testAPI(t)
+	os.WriteFile(filepath.Join(rec, "a.mp4"), make([]byte, 1000), 0o644)
+	os.WriteFile(filepath.Join(rec, "b.mp4"), make([]byte, 3000), 0o644)
+	a.m.meta.set([]string{"a.mp4"}, RecMeta{Streamer: "bob", Platform: "Twitch", Started: time.Now()})
+	a.m.meta.set([]string{"b.mp4"}, RecMeta{Streamer: "bob", Platform: "Twitch", Started: time.Now().AddDate(0, 0, -2)})
+	a.m.meta.setSaved([]string{"b.mp4"}, true)
+	c, b := call(t, a, "GET", "/api/stats", nil)
+	if c != 200 {
+		t.Fatal(c, string(b))
+	}
+	var st struct {
+		Disk    *diskStat `json:"disk"`
+		Library struct {
+			Count, Size, SavedCount, SavedSize int64
+		} `json:"library"`
+		Streamers []groupStat `json:"streamers"`
+		Days      []dayStat   `json:"days"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	// field names are snake_case in JSON; re-read the ones we care about
+	var raw map[string]map[string]any
+	json.Unmarshal(b, &raw)
+	if raw["library"]["count"].(float64) != 2 || raw["library"]["size"].(float64) != 4000 || raw["library"]["saved_size"].(float64) != 3000 {
+		t.Fatalf("library: %v", raw["library"])
+	}
+	if st.Disk == nil || st.Disk.Total == 0 || st.Disk.Used > st.Disk.Total {
+		t.Fatalf("disk: %+v", st.Disk)
+	}
+	if len(st.Streamers) != 1 || st.Streamers[0].Count != 2 || st.Streamers[0].Size != 4000 {
+		t.Fatalf("streamers: %+v", st.Streamers)
+	}
+	if len(st.Days) != 14 || st.Days[13].Count != 1 || st.Days[11].Count != 1 {
+		t.Fatalf("days: %+v", st.Days)
+	}
+}

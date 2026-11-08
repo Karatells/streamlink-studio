@@ -787,6 +787,7 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("/api/logout", a.auth.logout)
 	mux.HandleFunc("GET /api/state", a.state)
 	mux.HandleFunc("GET /api/version", a.version)
+	mux.HandleFunc("GET /api/stats", a.stats)
 	mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.upd.Status()) })
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
 		a.upd.Check(r.Context(), true)

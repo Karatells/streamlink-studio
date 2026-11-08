@@ -29,8 +29,8 @@ restarts the service. Updates never touch `/var/lib/streamlink-studio` (database
 
 ## Settings & updates
 
-Settings are split into tabs (`#/settings/general|auth|tools|updates`): **General** (defaults for new channels),
-**Authorization** (Twitch token, global cookies, proxy), **Tools** (streamlink/ffmpeg paths and status) and **Updates**.
+Settings are split into tabs (`#/settings/general|auth|tools|stats|updates`): **General** (defaults for new channels),
+**Authorization** (Twitch token, global cookies, proxy), **Tools** (streamlink/ffmpeg paths and status), **Statistics** (disk usage and a forecast of when it fills up, library size, saved files, recordings per day for 14 days, space by streamer and platform, largest files, server load/memory/uptime; refreshes every 15 s) and **Updates**.
 
 * **Update check** looks at the channel the program was installed from (`STUDIO_CHANNEL`, written by `install.sh`;
   inferred from the version if absent). You can pick another channel on the Updates tab; the installed one is marked ★.
@@ -112,7 +112,7 @@ Copy `web/locales/en.json` to `web/locales/es.json`, translate it, and register 
 
 ## API (used by the UI)
 
-`GET /api/state` · `GET|PUT /api/settings` · `POST /api/channels` · `PUT|DELETE /api/channels/{id}` ·
+`GET /api/state` · `GET /api/stats` · `GET|PUT /api/settings` · `POST /api/channels` · `PUT|DELETE /api/channels/{id}` ·
 `POST /api/channels/{id}/{record|stop|check}` · `POST /api/channels/test` · `PUT|DELETE /api/channels/{id}/cookies` ·
 `GET /api/recordings` · `GET /api/recordings/{name}/{stream|download}` · `DELETE /api/recordings/{name}` ·
 `POST /api/recordings/{name}/{convert|trim}` · `POST /api/recordings/{delete|save|merge}` · `GET /api/jobs` · `GET /healthz`

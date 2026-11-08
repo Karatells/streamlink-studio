@@ -539,7 +539,7 @@ function recordingsView(savedMode) {
         <ol class="mergelist">${ordered.map((r) => `<li><span class="name">${esc(r.name)}</span><span class="muted small">${esc(new Date(r.started).toLocaleString())} · ${fmtSize(r.size)}</span></li>`).join('')}</ol>
         ${mixed ? `<div class="result error">${esc(t('rec_merge_mixed'))}</div>` : ''}
         ${streamers.size > 1 ? `<div class="result">${esc(t('rec_merge_streamers'))}</div>` : ''}
-        <label class="check"><input type="checkbox" id="mdel"> ${esc(t('rec_merge_delete'))}</label>
+        <label class="check mdel"><input type="checkbox" id="mdel"> <span>${esc(t('rec_merge_delete'))}<br><span class="muted small">${esc(t('rec_merge_delete_hint'))}</span></span></label>
         <div class="muted small">${esc(t('rec_merge_total', { count: ordered.length, size: fmtSize(total) }))}</div>`,
       footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="mgo" ${mixed ? 'disabled' : ''}>⛓ ${esc(t('rec_merge'))}</button>`,
     });
@@ -662,7 +662,7 @@ function trimModal(rec) {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'tools', 'updates'];
+const SET_TABS = ['general', 'auth', 'tools', 'stats', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -678,6 +678,7 @@ function settingsView(tab) {
     settings = await api('GET', '/settings');
     if (alive.stop) return;
     if (tab === 'updates') return updatesTab(body, alive);
+    if (tab === 'stats') return statsTab(body, alive);
     const ver = await api('GET', '/version');
     if (alive.stop) return;
     const v = (id) => $(id).value;
@@ -733,6 +734,74 @@ function settingsView(tab) {
     }
   })().catch((e) => toast(e.message, true));
   return view;
+}
+
+/* ---------------------------------------------------- statistics tab */
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d ? t('st_uptime_d', { d, h }) : h ? t('st_uptime_h', { h, m }) : t('st_uptime_m', { m });
+}
+
+function statsTab(body, alive) {
+  const bars = (items, total) => items.length ? `<div class="hbars">${items.map((g) => `<div class="hbar">
+      <div class="hbar-top"><span class="hbar-name">${esc(g.name)}</span><span class="muted small">${esc(t('st_files_n', { count: g.count }))} · ${fmtSize(g.size)}</span></div>
+      <div class="meter"><i style="width:${total ? Math.max(2, (g.size / total) * 100) : 0}%"></i></div></div>`).join('')}</div>` : `<div class="muted">${esc(t('st_no_data'))}</div>`;
+
+  async function load() {
+    const s = await api('GET', '/stats');
+    if (alive.stop) return;
+    const d = s.disk, lib = s.library, sys = s.system;
+    const pct = d && d.total ? Math.round((d.used / d.total) * 100) : 0;
+    const level = pct >= 90 ? 'bad' : pct >= 75 ? 'warn' : 'ok';
+    const libPct = d && d.total ? Math.min(100, (lib.size / d.total) * 100) : 0;
+    const otherPct = d && d.total ? Math.max(0, pct - libPct) : 0;
+    const maxDay = Math.max(1, ...s.days.map((x) => x.size));
+    const memUsed = sys.mem_total ? sys.mem_total - sys.mem_avail : 0;
+    const left = s.days_left > 0 ? (s.days_left > 3650 ? t('st_days_left_many') : t('st_days_left', { days: Math.floor(s.days_left) })) : t('st_days_left_unknown');
+    body.innerHTML = `
+      <fieldset class="card"><legend>${esc(t('st_disk'))}</legend>
+        ${d ? `<div class="diskbar ${level}" role="img" aria-label="${pct}%"><i class="lib" style="width:${libPct}%"></i><i class="other" style="width:${otherPct}%"></i></div>
+        <div class="disk-legend">
+          <span><i class="sw lib"></i>${esc(t('st_recordings'))}: <b>${fmtSize(lib.size)}</b></span>
+          <span><i class="sw other"></i>${esc(t('st_other_used'))}: <b>${fmtSize(Math.max(0, d.used - lib.size))}</b></span>
+          <span><i class="sw free"></i>${esc(t('st_free'))}: <b>${fmtSize(d.free)}</b></span></div>
+        <div class="muted small">${esc(t('st_disk_line', { used: fmtSize(d.used), total: fmtSize(d.total), pct }))} · ${esc(left)}</div>
+        <div class="muted small">${esc(lib.recordings_dir)}</div>` : `<div class="muted">${esc(t('st_no_data'))}</div>`}
+      </fieldset>
+      <div class="tiles">
+        <div class="tile"><div class="tile-n">${lib.count}</div><div class="muted small">${esc(t('st_tile_files'))}</div><div class="small">${fmtSize(lib.size)}</div></div>
+        <div class="tile"><div class="tile-n">${lib.saved_count}</div><div class="muted small">${esc(t('st_tile_saved'))}</div><div class="small">${fmtSize(lib.saved_size)}</div></div>
+        <div class="tile"><div class="tile-n">${s.channels.recording}<span class="muted"> / ${s.channels.total}</span></div><div class="muted small">${esc(t('st_tile_channels'))}</div><div class="small">${esc(t('st_recording_now'))}</div></div>
+        <div class="tile"><div class="tile-n">${fmtSize(s.week_size)}</div><div class="muted small">${esc(t('st_tile_week'))}</div><div class="small">${esc(t('st_per_day', { size: fmtSize(s.week_size / 7) }))}</div></div>
+      </div>
+      <fieldset class="card"><legend>${esc(t('st_activity'))}</legend>
+        <div class="daychart">${s.days.map((x) => `<div class="daycol" title="${esc(x.date)}: ${esc(t('st_files_n', { count: x.count }))}, ${fmtSize(x.size)}">
+          <div class="daybar" style="height:${x.size ? Math.max(4, (x.size / maxDay) * 100) : 0}%"></div></div>`).join('')}</div>
+        <div class="row between small muted"><span>${esc(s.days[0].date)}</span><span>${esc(t('st_max_day', { size: fmtSize(maxDay === 1 ? 0 : maxDay) }))}</span><span>${esc(s.days[13].date)}</span></div>
+      </fieldset>
+      <div class="two">
+        <fieldset class="card"><legend>${esc(t('st_by_streamer'))}</legend>${bars(s.streamers, s.streamers[0]?.size)}</fieldset>
+        <fieldset class="card"><legend>${esc(t('st_by_platform'))}</legend>${bars(s.platforms, s.platforms[0]?.size)}</fieldset>
+      </div>
+      <fieldset class="card"><legend>${esc(t('st_largest'))}</legend>
+        ${s.largest.length ? `<ol class="mergelist">${s.largest.map((r) => `<li><span class="name">${esc(r.name)}</span><span class="muted small">${esc(r.streamer)} · ${fmtSize(r.size)}</span></li>`).join('')}</ol>` : `<div class="muted">${esc(t('st_no_data'))}</div>`}
+      </fieldset>
+      <fieldset class="card"><legend>${esc(t('st_system'))}</legend>
+        <dl class="kv">
+          <dt>${esc(t('st_uptime_app'))}</dt><dd>${esc(fmtUptime(sys.uptime_app))}</dd>
+          <dt>${esc(t('st_uptime_host'))}</dt><dd>${sys.uptime_host ? esc(fmtUptime(sys.uptime_host)) : '—'}</dd>
+          <dt>${esc(t('st_load'))}</dt><dd>${sys.load1.toFixed(2)} (${esc(t('st_cpus', { n: sys.cpus }))})</dd>
+          ${sys.mem_total ? `<dt>${esc(t('st_memory'))}</dt><dd>${fmtSize(memUsed)} / ${fmtSize(sys.mem_total)}</dd>` : ''}
+          <dt>${esc(t('st_app_memory'))}</dt><dd>${fmtSize(sys.app_mem)}</dd>
+          <dt>${esc(t('st_data_size'))}</dt><dd>${fmtSize(lib.data_size)}</dd>
+        </dl>
+      </fieldset>
+      <div class="row"><button class="btn" id="st-refresh">${esc(t('st_refresh'))}</button><span class="muted small">${esc(t('st_auto'))}</span></div>`;
+    $('#st-refresh').onclick = guard(load);
+    const id = setTimeout(() => load().catch(() => {}), 15000);
+    alive.timers.push(id);
+  }
+  load().catch((e) => toast(e.message, true));
 }
 
 /* ------------------------------------------------------- updates tab */

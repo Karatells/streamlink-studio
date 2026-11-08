@@ -331,3 +331,28 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .tblcard th:nth-child(6) { width: 300px; }
   .tblcard td { overflow-wrap: anywhere; }
 }
+
+/* ---- statistics ---- */
+.row.between { justify-content: space-between; }
+.diskbar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--panel2); border: 1px solid var(--border); }
+.diskbar i { display: block; height: 100%; }
+.diskbar .lib { background: var(--accent); }
+.diskbar .other { background: var(--muted); opacity: .55; }
+.diskbar.warn .other { background: var(--warn); opacity: .8; }
+.diskbar.bad .other { background: var(--bad); opacity: .8; }
+.disk-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; background: var(--panel2); border: 1px solid var(--border); }
+.sw.lib { background: var(--accent); border-color: var(--accent); }
+.sw.other { background: var(--muted); opacity: .6; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile-n { font-size: 24px; font-weight: 700; overflow-wrap: anywhere; }
+.daychart { display: flex; align-items: flex-end; gap: 5px; height: 110px; }
+.daycol { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+.daybar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+.hbars { display: flex; flex-direction: column; gap: 10px; }
+.hbar-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.hbar-name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.meter { height: 7px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.meter i { display: block; height: 100%; background: var(--accent); }
+.mdel { align-items: flex-start; }
