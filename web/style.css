@@ -125,6 +125,25 @@ video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; }
 .toast { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 8px; box-shadow: var(--shadow); max-width: 340px; }
 .toast.err { border-left-color: var(--bad); }
 
+/* recordings table becomes cards below 1100px (phones, also in landscape) */
+@media (max-width: 1100px) {
+  .card:has(table) { padding: 0 6px; }
+  table, thead, tbody, tr, td { display: block; width: 100%; }
+  thead { display: none; }
+  tr { padding: 10px 4px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: 0; }
+  td { border: 0; padding: 3px 6px; text-align: left; }
+  td.num { text-align: left; }
+  td.name { font-weight: 600; padding-bottom: 6px; }
+  td[data-label] { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+  td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .actions { justify-content: flex-start; padding-top: 6px; }
+  .actions .btn { flex: 1 1 auto; text-align: center; }
+  td.sel { position: absolute; top: 8px; right: 6px; width: auto; padding: 0; z-index: 1; }
+  td.sel input { width: 22px; height: 22px; }
+  td.name { padding-right: 38px; }
+  tr { position: relative; }
+}
 /* ------------------------------------------------ tablets / phones */
 @media (max-width: 900px) {
   main { padding: 14px 14px 60px; }
@@ -159,18 +178,6 @@ video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; }
   .filters > * { flex: 1 1 100%; }
   .filters > label { flex: 1 1 calc(50% - 5px); min-width: 0; flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 4px; }
   .filters select, .filters input[type=date] { width: 100% !important; }
-  .card:has(table) { padding: 0 6px; }
-  table, thead, tbody, tr, td { display: block; width: 100%; }
-  thead { display: none; }
-  tr { padding: 10px 4px 12px; border-bottom: 1px solid var(--border); }
-  tbody tr:last-child { border-bottom: 0; }
-  td { border: 0; padding: 3px 6px; text-align: left; }
-  td.num { text-align: left; }
-  td.name { font-weight: 600; padding-bottom: 6px; }
-  td[data-label] { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
-  td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .actions { justify-content: flex-start; padding-top: 6px; }
-  .actions .btn { flex: 1 1 auto; text-align: center; }
   .active-row { gap: 8px 12px; }
 
   /* modals are full-screen sheets with sticky header/footer */
@@ -314,15 +321,11 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .mergelist li .name { display: block; font-weight: 600; word-break: break-all; }
 .result.error { color: var(--bad); border-color: var(--bad); }
 @media (max-width: 720px) {
-  tr { position: relative; }
-  td.sel { position: absolute; top: 8px; right: 6px; width: auto; padding: 0; z-index: 1; }
-  td.sel input { width: 22px; height: 22px; }
-  td.name { padding-right: 38px; }
   .bulkbar .btn { flex: 1 1 auto; text-align: center; }
   .bulk-info { flex: 1 1 100%; }
   .bulkbar .grow { display: none; }
 }
-@media (min-width: 721px) {
+@media (min-width: 1101px) {
   .tblcard table { table-layout: fixed; }
   .tblcard th:nth-child(1) { width: 34px; }
   .tblcard th:nth-child(3) { width: 20%; }
