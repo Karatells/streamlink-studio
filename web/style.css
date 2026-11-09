@@ -451,3 +451,18 @@ nav a { white-space: nowrap; }
   .topbar select#lang { width: 110px; }
 }
 .card.ch > .row .btn[data-act=check] { flex: 0 0 auto; margin-left: auto; padding-left: 16px; padding-right: 16px; }
+
+/* ---- system / log tabs ---- */
+.hc-overall { font-weight: 600; margin-bottom: 8px; }
+.hc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.hc-list li { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hc-list li > b { font-weight: 600; }
+.hc-list li .small { overflow-wrap: anywhere; min-width: 0; }
+.snippet { margin: 4px 0 8px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; font-size: 12.5px; }
+.lg { padding: 10px 12px; margin-bottom: 8px; border-left: 3px solid var(--border); }
+.lg.warn { border-left-color: var(--warn); }
+.lg.error { border-left-color: var(--danger, #ef4444); }
+.lg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lg-msg { margin-top: 4px; overflow-wrap: anywhere; }
+.lg-detail { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
+.row.filters select { max-width: 100%; }

@@ -86,7 +86,7 @@ func mkVideo(t *testing.T, path, color string) {
 func waitJob(t *testing.T, a *API, id string) Job {
 	for i := 0; i < 200; i++ {
 		for _, j := range a.m.Jobs() {
-			if j.ID == id && j.Status != "running" {
+			if j.ID == id && j.Status != "running" && j.Status != "queued" {
 				return j
 			}
 		}

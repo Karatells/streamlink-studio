@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -70,16 +71,21 @@ type CheckResult struct {
 }
 
 type Manager struct {
-	cfg    Config
-	st     *Store
-	mu     sync.Mutex
-	rt     map[string]*Runtime
-	jobs   []*Job
-	meta   *metaStore
-	notes  *Notifier
-	gotify *Gotify
-	wg     sync.WaitGroup
-	ctx    context.Context
+	cfg      Config
+	st       *Store
+	mu       sync.Mutex
+	rt       map[string]*Runtime
+	jobs     []*Job
+	meta     *metaStore
+	notes    *Notifier
+	gotify   *Gotify
+	enc      chan struct{} // one compression at a time
+	elog     *EventLog
+	cnt      *Counters
+	lib      libCache
+	lastTick atomic.Int64 // unix nanos of the last poller tick (health)
+	wg       sync.WaitGroup
+	ctx      context.Context
 }
 
 func NewManager(cfg Config, st *Store) *Manager {
@@ -87,8 +93,14 @@ func NewManager(cfg Config, st *Store) *Manager {
 	ms.pruneMissing(cfg.RecDir)
 	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
 	m.notes = OpenNotifier(filepath.Join(cfg.DataDir, "notifications.json"), func() []string { return st.Settings().NotifyOff })
+	m.enc = make(chan struct{}, 1)
+	m.elog = OpenEventLog(filepath.Join(cfg.DataDir, "events.json"))
+	m.cnt = NewCounters()
 	m.gotify = NewGotify(st.Settings)
-	m.notes.sink = m.gotify.Enqueue
+	m.notes.sink = func(n Notification) {
+		m.cnt.Inc("streamlink_studio_notifications_total", "type", n.Type)
+		m.gotify.Enqueue(n)
+	}
 	return m
 }
 
@@ -141,6 +153,7 @@ func (m *Manager) Run(ctx context.Context) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
+		m.lastTick.Store(time.Now().UnixNano())
 		m.tick(ctx, sem)
 		select {
 		case <-ctx.Done():
@@ -188,6 +201,16 @@ func (m *Manager) tick(ctx context.Context, sem chan struct{}) {
 }
 
 func (m *Manager) applyCheck(ch Channel, res CheckResult) {
+	switch {
+	case res.Live:
+		m.cnt.Inc("streamlink_studio_checks_total", "result", "live")
+	case res.AuthError:
+		m.cnt.Inc("streamlink_studio_checks_total", "result", "auth_error")
+	case res.Error != "":
+		m.cnt.Inc("streamlink_studio_checks_total", "result", "error")
+	default:
+		m.cnt.Inc("streamlink_studio_checks_total", "result", "offline")
+	}
 	// remember the detected plugin
 	if res.Plugin != "" {
 		if cur, ok := m.st.Channel(ch.ID); ok && cur.Plugin != res.Plugin {
@@ -225,6 +248,9 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 		if rt.seen && !rt.wasLive {
 			after = evt("stream_live", map[string]string{"title": res.Title, "recording": boolStr(start)}, "")
 		}
+		if !rt.wasLive {
+			m.elog.Add(ch, "check", "info", "stream is live", "title: "+res.Title+"\nqualities: "+strings.Join(res.Streams, ", "))
+		}
 		rt.seen, rt.wasLive = true, true
 		m.mu.Unlock()
 		if after != nil {
@@ -242,15 +268,20 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 		}
 		rt.Status = StatusAuthError
 		rt.Error = res.Error
+		m.elog.Add(ch, "check", "error", "authorization problem", res.Error)
 	case res.Error != "":
 		rt.Status = StatusError
 		rt.Error = res.Error
+		m.elog.Add(ch, "check", "warn", "check failed", res.Error)
 	default:
 		rt.Status = StatusOffline
 		rt.Title = ""
 		rt.suppress = false
 		if rt.seen && rt.wasLive {
 			after = evt("stream_ended", nil, "")
+		}
+		if rt.wasLive {
+			m.elog.Add(ch, "check", "info", "stream went offline", "")
 		}
 		rt.seen, rt.wasLive = true, false
 	}
@@ -517,6 +548,7 @@ func (m *Manager) StartRecording(id string) error {
 	spec := m.effectiveQuality(ch)
 	choice := resolveQuality(spec, streams)
 	log.Printf("[%s] quality %q -> %q (offered: %s)", streamerName(ch), spec, choice.Arg, strings.Join(streams, ", "))
+	m.elog.Add(ch, "record", "info", fmt.Sprintf("quality %q -> %q", spec, choice.Arg), "offered: "+strings.Join(streams, ", "))
 
 	if err := ensureDir(m.cfg.RecDir); err != nil {
 		return err
@@ -552,8 +584,11 @@ func (m *Manager) StartRecording(id string) error {
 		cancel()
 		cleanup()
 		_ = os.Remove(filepath.Join(m.cfg.RecDir, tmp))
+		m.elog.Add(ch, "record", "error", "could not start streamlink", err.Error())
 		return err
 	}
+	m.cnt.Inc("streamlink_studio_recordings_started_total")
+	m.elog.Add(ch, "record", "info", "recording started -> "+tmp, "")
 	rec := &Rec{ChannelID: id, TmpName: tmp, Final: final, Started: time.Now(), Quality: quality,
 		cancel: cancel, done: make(chan struct{})}
 
@@ -591,6 +626,20 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 		size = fi.Size()
 	}
 	log.Printf("[%s] recording finished (%d bytes, err=%v)", streamerName(ch), size, werr)
+	switch {
+	case rec.stopped:
+		m.cnt.Inc("streamlink_studio_recordings_finished_total", "result", "stopped")
+		m.elog.Add(ch, "record", "info", fmt.Sprintf("recording stopped (%s)", fmtBytes(size)), output)
+	case size == 0 && werr != nil:
+		m.cnt.Inc("streamlink_studio_recordings_finished_total", "result", "failed")
+		m.elog.Add(ch, "record", "error", "recording failed: "+werr.Error(), output)
+	case werr != nil:
+		m.cnt.Inc("streamlink_studio_recordings_finished_total", "result", "interrupted")
+		m.elog.Add(ch, "record", "warn", fmt.Sprintf("streamlink exited with an error, %s kept: %v", fmtBytes(size), werr), output)
+	default:
+		m.cnt.Inc("streamlink_studio_recordings_finished_total", "result", "ok")
+		m.elog.Add(ch, "record", "info", fmt.Sprintf("recording finished (%s)", fmtBytes(size)), output)
+	}
 	failMsg := ""
 
 	m.mu.Lock()
@@ -644,6 +693,7 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 	} else {
 		m.meta.remove(rec.Final)
 		log.Printf("[%s] remux failed, keeping %s: %v", streamerName(ch), rec.TmpName, err)
+		m.elog.Add(ch, "job", "warn", "remux failed, raw .ts kept: "+rec.TmpName, err.Error())
 	}
 }
 

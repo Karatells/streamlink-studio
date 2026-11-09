@@ -11,27 +11,30 @@ import (
 	"time"
 )
 
-// Job is a post-processing task (remux / trim) run by ffmpeg.
+// Job is a post-processing task (remux / trim / merge / compress) run by ffmpeg.
 type Job struct {
 	ID       string    `json:"id"`
 	Type     string    `json:"type"` // remux | trim
 	Input    string    `json:"input"`
 	Output   string    `json:"output"`
-	Status   string    `json:"status"`   // running | done | error
+	Status   string    `json:"status"`   // queued | running | done | error
 	Progress float64   `json:"progress"` // 0..1, -1 = unknown
 	Error    string    `json:"error,omitempty"`
 	Started  time.Time `json:"started"`
 }
 
-func (m *Manager) newJob(typ, in, out string) *Job {
-	j := &Job{ID: newID(), Type: typ, Input: in, Output: out, Status: "running", Progress: -1, Started: time.Now()}
+func (m *Manager) newJob(typ, in, out string) *Job { return m.newJobAs(typ, in, out, "running") }
+
+// newJobAs creates a job; a "queued" job announces itself only when it starts.
+func (m *Manager) newJobAs(typ, in, out, status string) *Job {
+	j := &Job{ID: newID(), Type: typ, Input: in, Output: out, Status: status, Progress: -1, Started: time.Now()}
 	m.mu.Lock()
 	m.jobs = append(m.jobs, j)
 	if len(m.jobs) > 60 { // drop the oldest finished jobs
 		keep := m.jobs[:0]
 		drop := len(m.jobs) - 60
 		for _, o := range m.jobs {
-			if drop > 0 && o.Status != "running" {
+			if drop > 0 && o.Status != "running" && o.Status != "queued" {
 				drop--
 				continue
 			}
@@ -40,7 +43,9 @@ func (m *Manager) newJob(typ, in, out string) *Job {
 		m.jobs = keep
 	}
 	m.mu.Unlock()
-	m.jobEvent(j, "job_started")
+	if status == "running" {
+		m.jobEvent(j, "job_started")
+	}
 	return j
 }
 
@@ -51,6 +56,13 @@ func (m *Manager) jobEvent(j *Job, typ string) {
 		m.mu.Lock()
 		p["error"] = j.Error
 		m.mu.Unlock()
+	}
+	switch typ {
+	case "job_done":
+		m.cnt.Inc("streamlink_studio_jobs_total", "type", j.Type, "result", "done")
+	case "job_failed":
+		m.cnt.Inc("streamlink_studio_jobs_total", "type", j.Type, "result", "error")
+		m.elog.Add(Channel{}, "job", "error", j.Type+" failed: "+j.Input, p["error"])
 	}
 	m.notes.Notify(typ, "", p, "")
 }

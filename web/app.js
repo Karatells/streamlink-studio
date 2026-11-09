@@ -407,7 +407,7 @@ function jobsView() {
     const jobs = state.jobs;
     $('#jobs-wrap').innerHTML = jobs.length ? jobs.map((j) => {
       const pct = j.progress >= 0 ? Math.round(j.progress * 100) : null;
-      const label = j.status === 'running' ? t('job_running') : j.status === 'done' ? t('job_done') : t('job_failed');
+      const label = j.status === 'queued' ? t('job_queued') : j.status === 'running' ? t('job_running') : j.status === 'done' ? t('job_done') : t('job_failed');
       return `<div class="card job ${j.status}">
         <div class="job-head"><b>${esc(t('job_' + j.type))}</b><span class="badge ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'error' : ''}">${esc(label)}</span>
           <span class="grow"></span><span class="muted small">${esc(fmtJobTime(j.started))}</span></div>
@@ -532,6 +532,7 @@ function recordingsView(savedMode, sub) {
       <span class="grow"></span>
       <button class="btn sm" data-b="selall">${esc(t('rec_select_all'))}</button>
       <button class="btn sm" data-b="merge" ${items.length < 2 ? 'disabled' : ''} title="${esc(items.length < 2 ? t('rec_merge_need_two') : '')}">⛓ ${esc(t('rec_merge'))}</button>
+      <button class="btn sm" data-b="compress">🗜 ${esc(t('rec_compress'))}</button>
       <button class="btn sm" data-b="${savedMode ? 'unsave' : 'save'}">${savedMode ? '★ ' + esc(t('rec_unsave')) : '☆ ' + esc(t('rec_save'))}</button>
       <button class="btn sm danger" data-b="del">🗑 ${esc(t('delete'))}</button>
       <button class="btn sm" data-b="clear">✕ ${esc(t('rec_clear_sel'))}</button>`;
@@ -624,6 +625,29 @@ function recordingsView(savedMode, sub) {
     });
   };
 
+  const compressModal = async (items) => {
+    const cfg = await api('GET', '/settings');
+    const total = items.reduce((a, r) => a + r.size, 0);
+    const opt = (v, cur, label) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
+    const m = openModal({
+      title: t('rec_compress_title'),
+      body: `<div class="muted small">${esc(t('rec_compress_hint'))}</div>
+        <div class="two">
+          <div class="field"><label>${esc(t('cmp_codec'))}</label><select id="cmp-codec">${opt('h264', cfg.compress_codec, 'H.264 (' + t('cmp_codec_h264') + ')')}${opt('h265', cfg.compress_codec, 'H.265 / HEVC (' + t('cmp_codec_h265') + ')')}</select></div>
+          <div class="field"><label>${esc(t('cmp_level'))}</label><select id="cmp-level">${['light', 'balanced', 'strong'].map((k) => opt(k, cfg.compress_level, t('cmp_level_' + k))).join('')}</select></div>
+        </div>
+        <div class="field"><label>${esc(t('cmp_height'))}</label><select id="cmp-height">${opt(0, cfg.compress_height, t('cmp_height_keep'))}${[1080, 720, 540, 480].map((h) => opt(h, cfg.compress_height, h + 'p')).join('')}</select><span class="muted small">${esc(t('cmp_height_hint'))}</span></div>
+        <label class="check mdel"><input type="checkbox" id="cmp-replace"> <span>${esc(t('cmp_replace'))}<br><span class="muted small">${esc(t('cmp_replace_hint'))}</span></span></label>
+        <div class="muted small">${esc(t('cmp_total', { count: items.length, size: fmtSize(total) }))}</div>`,
+      footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="cmp-go">🗜 ${esc(t('rec_compress'))}</button>`,
+    });
+    $('#cmp-go', m).onclick = guard(async () => {
+      await api('POST', '/recordings/compress', { names: items.map((r) => r.name), codec: $('#cmp-codec', m).value, level: $('#cmp-level', m).value,
+        max_height: parseInt($('#cmp-height', m).value, 10) || 0, replace: $('#cmp-replace', m).checked });
+      closeModal(); sel.clear(); toast(t('cmp_started', { count: items.length })); refresh(); update();
+    });
+  };
+
   $('#bulk').addEventListener('click', guard(async (e) => {
     const b = e.target.closest('[data-b]');
     if (!b) return;
@@ -633,6 +657,7 @@ function recordingsView(savedMode, sub) {
       case 'clear': sel.clear(); render(); break;
       case 'selall': filtered().filter(selectable).forEach((r) => sel.add(r.name)); render(); break;
       case 'merge': mergeModal(items); break;
+      case 'compress': compressModal(items); break;
       case 'save': case 'unsave':
         await api('POST', '/recordings/save', { names, saved: b.dataset.b === 'save' });
         sel.clear(); toast(t(b.dataset.b === 'save' ? 'rec_saved_toast_n' : 'rec_unsaved_toast_n', { count: names.length })); refresh(); update(); break;
@@ -737,7 +762,7 @@ function trimModal(rec) {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'notifications', 'tools', 'stats', 'updates'];
+const SET_TABS = ['general', 'auth', 'notifications', 'tools', 'stats', 'system', 'log', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -755,6 +780,8 @@ function settingsView(tab) {
     if (tab === 'updates') return updatesTab(body, alive);
     if (tab === 'stats') return statsTab(body, alive);
     if (tab === 'notifications') return notificationsTab(body, alive);
+    if (tab === 'system') return systemTab(body, alive);
+    if (tab === 'log') return logTab(body, alive);
     const ver = await api('GET', '/version');
     if (alive.stop) return;
     const v = (id) => $(id).value;
@@ -773,8 +800,19 @@ function settingsView(tab) {
         </div>
         <div class="field"><label>${esc(t('set_def_template'))}</label><input type="text" id="s-tpl" value="${esc(settings.default_template)}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>
         <label class="check"><input type="checkbox" id="s-remux" ${settings.remux_after ? 'checked' : ''}> ${esc(t('set_remux'))}</label>
+      </fieldset>
+      <fieldset class="card"><legend>${esc(t('cmp_settings'))}</legend>
+        <div class="muted small" style="margin-bottom:8px">${esc(t('cmp_settings_hint'))}</div>
+        <div class="two">
+          <div class="field"><label>${esc(t('cmp_codec'))}</label><select id="s-ccodec"><option value="h264" ${settings.compress_codec === 'h265' ? '' : 'selected'}>H.264</option><option value="h265" ${settings.compress_codec === 'h265' ? 'selected' : ''}>H.265 / HEVC</option></select></div>
+          <div class="field"><label>${esc(t('cmp_level'))}</label><select id="s-clevel">${['light', 'balanced', 'strong'].map((k) => `<option value="${k}" ${settings.compress_level === k ? 'selected' : ''}>${esc(t('cmp_level_' + k))}</option>`).join('')}</select></div>
+        </div>
+        <div class="two">
+          <div class="field"><label>${esc(t('cmp_height'))}</label><select id="s-cheight">${[0, 1080, 720, 540, 480].map((h) => `<option value="${h}" ${settings.compress_height === h ? 'selected' : ''}>${h ? h + 'p' : esc(t('cmp_height_keep'))}</option>`).join('')}</select></div>
+          <div class="field"><label>${esc(t('cmp_auto_days'))}</label><input type="number" min="0" max="3650" id="s-cdays" value="${settings.compress_auto_days || 0}"><span class="muted small">${esc(t('cmp_auto_hint'))}</span></div>
+        </div>
       </fieldset>${saveBar}`;
-      save(() => ({ default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60, default_template: v('#s-tpl'), remux_after: $('#s-remux').checked }));
+      save(() => ({ compress_codec: v('#s-ccodec'), compress_level: v('#s-clevel'), compress_height: parseInt(v('#s-cheight'), 10) || 0, compress_auto_days: parseInt(v('#s-cdays'), 10) || 0, default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60, default_template: v('#s-tpl'), remux_after: $('#s-remux').checked }));
     } else if (tab === 'auth') {
       body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_global_auth'))}</legend>
         <div class="field"><label>${esc(t('set_twitch_token'))}</label>
@@ -878,6 +916,92 @@ function notificationsTab(body, alive) {
     await api('POST', '/gotify/test', { url: b.gotify_url, token: b.gotify_token, lang: b.gotify_lang });
     toast(t('gotify_test_ok')); status();
   });
+}
+
+/* Settings → System: health checks + monitoring (Prometheus / Grafana) */
+function systemTab(body, alive) {
+  const later = (fn, ms) => { const id = setTimeout(fn, ms); alive.timers.push(id); };
+  const ICON = { ok: '🟢', warn: '🟡', error: '🔴' };
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const scrape = `scrape_configs:\n  - job_name: streamlink-studio\n    metrics_path: /metrics\n    authorization:\n      credentials: <STUDIO_METRICS_TOKEN>\n    static_configs:\n      - targets: ['${location.host}']`;
+  body.innerHTML = `<fieldset class="card"><legend>${esc(t('hc_title'))}</legend><div id="hc"><div class="muted">${esc(t('loading'))}</div></div></fieldset>
+    <fieldset class="card"><legend>${esc(t('mon_title'))}</legend>
+      <div class="muted small" style="margin-bottom:8px">${esc(t('mon_hint'))}</div>
+      <div class="field"><label>${esc(t('mon_metrics_url'))}</label><div class="cmd"><code>${esc(base)}metrics</code><button class="btn sm" data-copy="${esc(base)}metrics">${esc(t('upd_copy'))}</button></div></div>
+      <div class="field"><label>${esc(t('mon_scrape'))}</label><pre class="snippet">${esc(scrape)}</pre><button class="btn sm" data-copy="${esc(scrape)}">${esc(t('upd_copy'))}</button>
+        <div class="muted small" style="margin-top:6px">${esc(t('mon_token_hint'))}</div></div>
+      <div class="field"><label>${esc(t('mon_grafana'))}</label>
+        <div class="row"><a class="btn sm" href="grafana/streamlink-studio-dashboard.json" download>⬇ ${esc(t('mon_grafana_dl'))}</a></div>
+        <span class="muted small">${esc(t('mon_grafana_hint'))}</span></div>
+    </fieldset>`;
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy]');
+    if (b) navigator.clipboard?.writeText(b.dataset.copy).then(() => toast(t('copied')), () => {});
+  });
+  const load = async () => {
+    if (alive.stop) return;
+    try {
+      const h = await api('GET', '/health');
+      if (alive.stop) return;
+      const label = (c) => { const k = 'hc_' + c.id; const l = t(k); return l === k ? c.id : l; };
+      $('#hc').innerHTML = `<div class="hc-overall ${h.status}">${ICON[h.status]} ${esc(t('hc_overall_' + h.status))} <span class="muted small">· ${esc(t('hc_uptime'))}: ${esc(fmtDuration(h.uptime_seconds))}</span></div>
+        <ul class="hc-list">${h.checks.map((c) => `<li class="${c.status}"><span>${ICON[c.status]}</span><b>${esc(label(c))}</b><span class="muted small">${esc(c.detail || '')}</span></li>`).join('')}</ul>`;
+    } catch (e) { if (!alive.stop) $('#hc').innerHTML = `<div class="errtxt">${esc(e.message)}</div>`; }
+    later(load, 10000);
+  };
+  load();
+}
+
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${sec % 60}s`;
+}
+
+/* Settings → Log: what streamlink / ffmpeg reported */
+function logTab(body, alive) {
+  const f = { channel: '', level: 'info' };
+  let sig = '';
+  const LV = { info: 'ℹ️', warn: '⚠️', error: '❌' };
+  body.innerHTML = `<div class="row filters" style="margin-bottom:10px">
+      <select id="lg-ch"></select>
+      <select id="lg-lv">${['info', 'warn', 'error'].map((k) => `<option value="${k}">${esc(t('log_lv_' + k))}</option>`).join('')}</select>
+      <span class="grow"></span>
+      <button class="btn sm" id="lg-reload">↻ ${esc(t('log_refresh'))}</button>
+      <button class="btn sm danger" id="lg-clear">🗑 ${esc(t('ntf_clear'))}</button></div>
+    <div class="muted small" style="margin-bottom:8px">${esc(t('log_hint'))}</div>
+    <div id="lg-list"></div>`;
+  const load = async () => {
+    if (alive.stop) return;
+    try {
+      const q = new URLSearchParams({ level: f.level, limit: '300' });
+      if (f.channel) q.set('channel', f.channel);
+      const r = await api('GET', '/events?' + q);
+      if (alive.stop) return;
+      const chSel = $('#lg-ch');
+      const opts = `<option value="">${esc(t('log_all_channels'))}</option>` + r.channels.map((c) => `<option value="${esc(c.id)}" ${c.id === f.channel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+      if (chSel.innerHTML !== opts) chSel.innerHTML = opts;
+      const s = JSON.stringify(r.items);
+      if (s !== sig) {
+        sig = s;
+        $('#lg-list').innerHTML = r.items.length ? r.items.map((e) => `<div class="card lg ${e.level}">
+          <div class="lg-head"><span>${LV[e.level] || ''}</span>${e.platform ? platformBadge(e.platform) : ''}<b>${esc(e.channel || t('log_system'))}</b>
+            <span class="grow"></span><span class="muted small">${esc(new Date(e.last || e.time).toLocaleString())}</span></div>
+          <div class="lg-msg">${esc(e.msg)}${e.count > 1 ? ` <span class="badge">×${e.count}</span>` : ''}</div>
+          ${e.detail ? `<details><summary class="muted small">${esc(t('log_details'))}</summary><pre class="lg-detail">${esc(e.detail)}</pre></details>` : ''}</div>`).join('')
+          : `<div class="card"><div class="empty">${esc(t('log_none'))}</div></div>`;
+      }
+    } catch (e) { toast(e.message, true); }
+    alive.timers.push(setTimeout(load, 5000));
+  };
+  $('#lg-ch').onchange = (e) => { f.channel = e.target.value; sig = ''; load(); };
+  $('#lg-lv').onchange = (e) => { f.level = e.target.value; sig = ''; load(); };
+  $('#lg-reload').onclick = () => { sig = ''; load(); };
+  $('#lg-clear').onclick = guard(async () => {
+    if (!confirm(t('log_clear_confirm'))) return;
+    await api('DELETE', '/events'); sig = ''; load();
+  });
+  load();
 }
 
 function statsTab(body, alive) {

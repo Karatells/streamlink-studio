@@ -128,6 +128,11 @@ type SettingsView struct {
 	HasGotifyToken  bool     `json:"has_gotify_token"`
 	GotifyTypes     []string `json:"gotify_types"`
 	GotifyLang      string   `json:"gotify_lang"`
+
+	CompressCodec    string `json:"compress_codec"`
+	CompressLevel    string `json:"compress_level"`
+	CompressHeight   int    `json:"compress_height"`
+	CompressAutoDays int    `json:"compress_auto_days"`
 }
 
 func settingsView(s Settings) SettingsView {
@@ -139,7 +144,9 @@ func settingsView(s Settings) SettingsView {
 		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
 		RemuxAfter: s.RemuxAfter, StreamlinkBin: s.StreamlinkBin, FFmpegBin: s.FFmpegBin, UpdateChannel: s.UpdateChannel,
 		UpdateAuto: !s.UpdateCheckOff, NotifyOff: append([]string{}, s.NotifyOff...),
-		GotifyOn: s.GotifyOn, GotifyURL: s.GotifyURL, HasGotifyToken: s.GotifyToken != "", GotifyTypes: gt, GotifyLang: s.GotifyLang}
+		GotifyOn: s.GotifyOn, GotifyURL: s.GotifyURL, HasGotifyToken: s.GotifyToken != "", GotifyTypes: gt, GotifyLang: s.GotifyLang,
+		CompressCodec: orDefault(s.CompressCodec, "h264"), CompressLevel: orDefault(s.CompressLevel, "balanced"),
+		CompressHeight: s.CompressHeight, CompressAutoDays: s.CompressAutoDays}
 }
 
 // ----------------------------------------------------------- recordings
@@ -523,6 +530,11 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		GotifyToken     *string   `json:"gotify_token"` // nil = keep, "" = clear
 		GotifyTypes     *[]string `json:"gotify_types"`
 		GotifyLang      *string   `json:"gotify_lang"`
+
+		CompressCodec    *string `json:"compress_codec"`
+		CompressLevel    *string `json:"compress_level"`
+		CompressHeight   *int    `json:"compress_height"`
+		CompressAutoDays *int    `json:"compress_auto_days"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -619,6 +631,29 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if s.GotifyOn && (s.GotifyURL == "" || s.GotifyToken == "") {
 		writeErr(w, errBad("Gotify needs a server URL and an application token"))
 		return
+	}
+	if in.CompressCodec != nil {
+		s.CompressCodec = *in.CompressCodec
+	}
+	if in.CompressLevel != nil {
+		s.CompressLevel = *in.CompressLevel
+	}
+	if in.CompressHeight != nil {
+		s.CompressHeight = *in.CompressHeight
+	}
+	if in.CompressAutoDays != nil {
+		if *in.CompressAutoDays < 0 || *in.CompressAutoDays > 3650 {
+			writeErr(w, errBad("auto-compress age must be between 0 and 3650 days"))
+			return
+		}
+		s.CompressAutoDays = *in.CompressAutoDays
+	}
+	if in.CompressCodec != nil || in.CompressLevel != nil || in.CompressHeight != nil {
+		chk := CompressOpts{Codec: s.CompressCodec, Level: s.CompressLevel, MaxHeight: s.CompressHeight}
+		if err := chk.normalize(); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	if in.UpdateAuto != nil {
 		s.UpdateCheckOff = !*in.UpdateAuto
@@ -818,6 +853,29 @@ func (a *API) mergeRecs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, j)
 }
 
+// compressRecs queues re-encode jobs (x264/x265) for the selected recordings.
+func (a *API) compressRecs(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Names []string `json:"names"`
+		CompressOpts
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	names, err := a.recNames(in.Names)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jobs, err := a.m.Compress(names, in.CompressOpts)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 202, jobs)
+}
+
 func (a *API) convertRec(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.recPath(w, r); !ok {
 		return
@@ -899,11 +957,16 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/recordings/delete", a.bulkDeleteRecs)
 	mux.HandleFunc("POST /api/recordings/save", a.saveRecs)
 	mux.HandleFunc("POST /api/recordings/merge", a.mergeRecs)
+	mux.HandleFunc("POST /api/recordings/compress", a.compressRecs)
 	mux.HandleFunc("DELETE /api/recordings/{name}", a.deleteRec)
 	mux.HandleFunc("POST /api/recordings/{name}/convert", a.convertRec)
 	mux.HandleFunc("POST /api/recordings/{name}/trim", a.trimRec)
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.m.Jobs()) })
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /healthz", a.healthz)
+	mux.HandleFunc("GET /api/health", a.health)
+	mux.HandleFunc("GET /metrics", a.metrics)
+	mux.HandleFunc("GET /api/events", a.listEvents)
+	mux.HandleFunc("DELETE /api/events", a.clearEvents)
 	mux.Handle("/", static)
 	return mux
 }

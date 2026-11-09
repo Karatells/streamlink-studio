@@ -757,3 +757,10 @@ func (u *Updater) Status() map[string]any {
 	}
 	return st
 }
+
+// Available reports whether the last check found a newer release.
+func (u *Updater) Available() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.haveCheck && u.check.Available
+}

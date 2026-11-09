@@ -54,6 +54,11 @@ type Settings struct {
 	GotifyToken     string   `json:"gotify_token"`
 	GotifyTypes     []string `json:"gotify_types"` // nil = all types
 	GotifyLang      string   `json:"gotify_lang"`
+	// Compression defaults (manual dialog) and the automatic rule.
+	CompressCodec    string `json:"compress_codec"`     // h264 | h265
+	CompressLevel    string `json:"compress_level"`     // light | balanced | strong
+	CompressHeight   int    `json:"compress_height"`    // 0 = keep resolution
+	CompressAutoDays int    `json:"compress_auto_days"` // 0 = off; otherwise compress files older than N days
 }
 
 type storeData struct {

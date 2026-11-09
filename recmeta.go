@@ -20,6 +20,9 @@ type RecMeta struct {
 	Title     string    `json:"title,omitempty"`
 	Quality   string    `json:"quality,omitempty"`
 	Started   time.Time `json:"started"`
+	// Compressed marks files produced (or already examined) by the compressor,
+	// so the automatic rule never works on them twice.
+	Compressed bool `json:"compressed,omitempty"`
 }
 
 // metaStore is a small JSON index: file name -> RecMeta.
@@ -119,6 +122,25 @@ func (ms *metaStore) copy(src, dst string) {
 	if v, ok := ms.data[src]; ok {
 		ms.data[dst] = v
 		ms.saveLocked()
+	}
+}
+
+func (ms *metaStore) setCompressed(name string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	v := ms.data[name]
+	v.Compressed = true
+	ms.data[name] = v
+	ms.saveLocked()
+}
+
+// setSavedCarry moves the "saved" flag from one file to another.
+func (ms *metaStore) setSavedCarry(from, to string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if ms.saved[from] {
+		ms.saved[to] = true
+		ms.saveSavedLocked()
 	}
 }
 

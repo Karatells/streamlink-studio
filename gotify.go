@@ -27,6 +27,8 @@ type Gotify struct {
 	mu      sync.Mutex
 	lastOK  time.Time
 	lastErr string
+	sent    uint64
+	failed  uint64
 	lastAt  time.Time
 	locales map[string]map[string]string
 }
@@ -84,8 +86,10 @@ func (g *Gotify) record(err error) {
 	defer g.mu.Unlock()
 	if err == nil {
 		g.lastOK, g.lastErr = time.Now(), ""
+		g.sent++
 		return
 	}
+	g.failed++
 	g.lastErr, g.lastAt = err.Error(), time.Now()
 }
 
@@ -223,7 +227,7 @@ func (g *Gotify) Test(s Settings) error {
 func (g *Gotify) Status() map[string]any {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	out := map[string]any{"last_error": g.lastErr}
+	out := map[string]any{"last_error": g.lastErr, "sent": g.sent, "failed": g.failed}
 	if !g.lastOK.IsZero() {
 		out["last_ok"] = g.lastOK
 	}

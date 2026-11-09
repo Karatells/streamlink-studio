@@ -47,6 +47,7 @@ type failure struct {
 type Auth struct {
 	user, pass string
 	path       string
+	metricsTok string // optional bearer token that may read /metrics only (STUDIO_METRICS_TOKEN)
 
 	mu       sync.Mutex
 	sessions map[string]session // key: sha256(token) hex
@@ -55,7 +56,7 @@ type Auth struct {
 
 func NewAuth(user, pass, dataDir string) *Auth {
 	a := &Auth{user: user, pass: pass, path: dataDir + "/" + sessionFileName,
-		sessions: map[string]session{}, fails: map[string]*failure{}}
+		sessions: map[string]session{}, fails: map[string]*failure{}, metricsTok: os.Getenv("STUDIO_METRICS_TOKEN")}
 	if b, err := os.ReadFile(a.path); err == nil {
 		_ = json.Unmarshal(b, &a.sessions)
 	}
@@ -210,6 +211,16 @@ func (a *Auth) authed(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// metricsTokenOK lets Prometheus scrape /metrics with `Authorization: Bearer <token>`
+// without a user password; it grants nothing else.
+func (a *Auth) metricsTokenOK(r *http.Request) bool {
+	if a.metricsTok == "" || r.URL.Path != "/metrics" {
+		return false
+	}
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(tok), []byte(a.metricsTok)) == 1
+}
+
 func (a *Auth) credsOK(u, p string) bool {
 	uo := subtle.ConstantTimeCompare([]byte(u), []byte(a.user))
 	po := subtle.ConstantTimeCompare([]byte(p), []byte(a.pass))
@@ -250,7 +261,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request blocked"})
 			return
 		}
-		if publicPath(r.URL.Path) || a.authed(w, r) {
+		if publicPath(r.URL.Path) || a.metricsTokenOK(r) || a.authed(w, r) {
 			next.ServeHTTP(w, r)
 			return
 		}
