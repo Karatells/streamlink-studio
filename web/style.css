@@ -32,7 +32,7 @@ nav a { color: var(--muted); padding: 7px 12px; border-radius: 8px; font-weight:
 nav a:hover { background: var(--panel2); color: var(--text); }
 nav a.active { background: var(--panel2); color: var(--text); }
 .spacer { flex: 1; }
-select, input[type=text], input[type=password], input[type=number], input[type=search], input[type=date], textarea {
+select, input[type=text], input[type=password], input[type=number], input[type=search], input[type=url], input[type=date], textarea {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%;
 }
 select { width: auto; }
@@ -159,7 +159,7 @@ video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; }
   h2 { margin: 20px 0 8px; }
 
   /* comfortable touch targets; 16px inputs stop iOS from zooming on focus */
-  select, input[type=text], input[type=password], input[type=number], input[type=search], input[type=date], textarea { font-size: 16px; padding: 10px 11px; }
+  select, input[type=text], input[type=password], input[type=number], input[type=search], input[type=url], input[type=date], textarea { font-size: 16px; padding: 10px 11px; }
   select { max-width: 100%; }
   .btn { min-height: 40px; padding: 8px 14px; }
   .btn.sm { min-height: 38px; padding: 6px 12px; font-size: 13.5px; }

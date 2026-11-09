@@ -49,6 +49,11 @@ type Settings struct {
 	UpdateChannel   string   `json:"update_channel"`   // "" = the channel the program was installed from
 	UpdateCheckOff  bool     `json:"update_check_off"` // automatic checks disabled
 	NotifyOff       []string `json:"notify_off"`       // muted notification types
+	GotifyOn        bool     `json:"gotify_on"`
+	GotifyURL       string   `json:"gotify_url"`
+	GotifyToken     string   `json:"gotify_token"`
+	GotifyTypes     []string `json:"gotify_types"` // nil = all types
+	GotifyLang      string   `json:"gotify_lang"`
 }
 
 type storeData struct {

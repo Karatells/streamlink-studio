@@ -70,15 +70,16 @@ type CheckResult struct {
 }
 
 type Manager struct {
-	cfg   Config
-	st    *Store
-	mu    sync.Mutex
-	rt    map[string]*Runtime
-	jobs  []*Job
-	meta  *metaStore
-	notes *Notifier
-	wg    sync.WaitGroup
-	ctx   context.Context
+	cfg    Config
+	st     *Store
+	mu     sync.Mutex
+	rt     map[string]*Runtime
+	jobs   []*Job
+	meta   *metaStore
+	notes  *Notifier
+	gotify *Gotify
+	wg     sync.WaitGroup
+	ctx    context.Context
 }
 
 func NewManager(cfg Config, st *Store) *Manager {
@@ -86,6 +87,8 @@ func NewManager(cfg Config, st *Store) *Manager {
 	ms.pruneMissing(cfg.RecDir)
 	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
 	m.notes = OpenNotifier(filepath.Join(cfg.DataDir, "notifications.json"), func() []string { return st.Settings().NotifyOff })
+	m.gotify = NewGotify(st.Settings)
+	m.notes.sink = m.gotify.Enqueue
 	return m
 }
 

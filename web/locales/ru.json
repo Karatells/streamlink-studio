@@ -306,5 +306,21 @@
   "ntf_type_job_started": "Обработка начата",
   "ntf_type_job_done": "Обработка завершена",
   "ntf_type_job_failed": "Ошибка обработки",
-  "ntf_type_update_available": "Доступно обновление"
+  "ntf_type_update_available": "Доступно обновление",
+  "set_tab_notifications": "Уведомления",
+  "gotify_hint": "Отправлять выбранные уведомления на ваш сервер Gotify (push на телефон и компьютер). Доставка не зависит от списка отключённых уведомлений в приложении.",
+  "gotify_enable": "Отправлять уведомления в Gotify",
+  "gotify_url": "Адрес сервера Gotify",
+  "gotify_token": "Токен приложения",
+  "gotify_token_hint": "Создайте приложение в Gotify и вставьте его токен. Токен хранится только на сервере.",
+  "gotify_lang": "Язык сообщений",
+  "gotify_types": "Какие уведомления отправлять",
+  "gotify_types_hint": "Неотмеченные события в Gotify не отправляются.",
+  "gotify_all": "Выбрать все",
+  "gotify_none": "Снять все",
+  "gotify_test": "Отправить тест",
+  "gotify_test_ok": "Тестовое сообщение отправлено",
+  "gotify_last_ok": "Последняя доставка",
+  "gotify_last_error": "Последняя ошибка",
+  "gotify_test_msg": "Тестовое сообщение от Streamlink Studio — Gotify настроен правильно."
 }

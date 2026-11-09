@@ -306,5 +306,21 @@
   "ntf_type_job_started": "Processing started",
   "ntf_type_job_done": "Processing finished",
   "ntf_type_job_failed": "Processing failed",
-  "ntf_type_update_available": "Update available"
+  "ntf_type_update_available": "Update available",
+  "set_tab_notifications": "Notifications",
+  "gotify_hint": "Send selected notifications to your Gotify server (push to phone and desktop). Delivery does not depend on the in-app mute list.",
+  "gotify_enable": "Send notifications to Gotify",
+  "gotify_url": "Gotify server URL",
+  "gotify_token": "Application token",
+  "gotify_token_hint": "Create an application in Gotify and paste its token. It is stored on the server only.",
+  "gotify_lang": "Message language",
+  "gotify_types": "Which notifications to send",
+  "gotify_types_hint": "Unchecked events are not sent to Gotify.",
+  "gotify_all": "Select all",
+  "gotify_none": "Select none",
+  "gotify_test": "Send test",
+  "gotify_test_ok": "Test message sent",
+  "gotify_last_ok": "Last delivered",
+  "gotify_last_error": "Last error",
+  "gotify_test_msg": "Test message from Streamlink Studio — Gotify is set up correctly."
 }

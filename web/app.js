@@ -737,7 +737,7 @@ function trimModal(rec) {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'tools', 'stats', 'updates'];
+const SET_TABS = ['general', 'auth', 'notifications', 'tools', 'stats', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -754,6 +754,7 @@ function settingsView(tab) {
     if (alive.stop) return;
     if (tab === 'updates') return updatesTab(body, alive);
     if (tab === 'stats') return statsTab(body, alive);
+    if (tab === 'notifications') return notificationsTab(body, alive);
     const ver = await api('GET', '/version');
     if (alive.stop) return;
     const v = (id) => $(id).value;
@@ -818,6 +819,66 @@ function fmtUptime(sec) {
 }
 
 const platformIcon = (name) => (PLATFORM_HUE[String(name).toLowerCase()] !== undefined || state.icons?.[String(name).toLowerCase()]) ? platformBadge(name) + ' ' : '';
+
+/* Settings → Notifications: Gotify delivery */
+function notificationsTab(body, alive) {
+  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available'];
+  const sel = new Set(settings.gotify_types || types);
+  const fmt = (d) => new Date(d).toLocaleString();
+  const gl = settings.gotify_lang || lang;
+  body.innerHTML = `<fieldset class="card"><legend>Gotify</legend>
+    <div class="muted small" style="margin-bottom:8px">${esc(t('gotify_hint'))}</div>
+    <label class="check"><input type="checkbox" id="g-on" ${settings.gotify_on ? 'checked' : ''}> ${esc(t('gotify_enable'))}</label>
+    <div class="two" style="margin-top:10px">
+      <div class="field"><label>${esc(t('gotify_url'))}</label><input type="url" id="g-url" value="${esc(settings.gotify_url)}" placeholder="https://gotify.example.com" autocomplete="off" inputmode="url"></div>
+      <div class="field"><label>${esc(t('gotify_token'))}</label>
+        <div class="row"><input type="password" id="g-token" class="grow" autocomplete="off" placeholder="${settings.has_gotify_token ? esc(t('token_keep')) : ''}">
+        ${settings.has_gotify_token ? `<button class="btn sm danger" id="g-token-clear">${esc(t('remove_cookies'))}</button>` : ''}</div>
+        <span class="muted small">${esc(t('gotify_token_hint'))}</span></div>
+    </div>
+    <div class="field"><label>${esc(t('gotify_lang'))}</label>
+      <select id="g-lang">${languages.map((l) => `<option value="${l.code}" ${l.code === gl ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>${esc(t('gotify_types'))}</label>
+      <div class="row" style="gap:8px;margin-bottom:4px"><button class="btn sm" id="g-all" type="button">${esc(t('gotify_all'))}</button><button class="btn sm" id="g-none" type="button">${esc(t('gotify_none'))}</button></div>
+      <div id="g-types">${types.map((k) => `<label class="check"><input type="checkbox" data-type="${k}" ${sel.has(k) ? 'checked' : ''}> ${notifIcon({ type: k })} ${esc(t('ntf_type_' + k))}</label>`).join('')}</div>
+      <span class="muted small">${esc(t('gotify_types_hint'))}</span></div>
+    <div id="g-status" class="muted small"></div>
+  </fieldset>
+  <div class="row"><button class="btn primary" id="g-save">${esc(t('save'))}</button><button class="btn" id="g-test">${esc(t('gotify_test'))}</button></div>`;
+
+  const v = (id) => $(id).value.trim();
+  const collect = () => {
+    const b = { gotify_on: $('#g-on').checked, gotify_url: v('#g-url'), gotify_lang: $('#g-lang').value,
+      gotify_types: $$('#g-types [data-type]').filter((c) => c.checked).map((c) => c.dataset.type) };
+    if (v('#g-token')) b.gotify_token = v('#g-token');
+    return b;
+  };
+  const status = async () => {
+    try {
+      const s = await api('GET', '/gotify');
+      if (alive.stop) return;
+      $('#g-status').textContent = s.last_error ? '⚠ ' + t('gotify_last_error') + ' (' + fmt(s.last_error_at) + '): ' + s.last_error
+        : s.last_ok ? '✓ ' + t('gotify_last_ok') + ': ' + fmt(s.last_ok) : '';
+    } catch { /* ignore */ }
+  };
+  status();
+  $('#g-all').onclick = () => $$('#g-types [data-type]').forEach((c) => { c.checked = true; });
+  $('#g-none').onclick = () => $$('#g-types [data-type]').forEach((c) => { c.checked = false; });
+  $('#g-save').onclick = guard(async () => {
+    settings = await api('PUT', '/settings', collect());
+    toast(t('saved')); notificationsTab(body, alive);
+  });
+  const clr = $('#g-token-clear');
+  if (clr) clr.onclick = guard(async () => {
+    settings = await api('PUT', '/settings', { gotify_on: false, gotify_token: '' });
+    toast(t('saved')); notificationsTab(body, alive);
+  });
+  $('#g-test').onclick = guard(async () => {
+    const b = collect();
+    await api('POST', '/gotify/test', { url: b.gotify_url, token: b.gotify_token, lang: b.gotify_lang });
+    toast(t('gotify_test_ok')); status();
+  });
+}
 
 function statsTab(body, alive) {
   const bars = (items, total) => items.length ? `<div class="hbars">${items.map((g) => `<div class="hbar">

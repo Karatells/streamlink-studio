@@ -182,6 +182,7 @@ type Updater struct {
 	haveCheck bool
 	lastCheck time.Time
 	apply     ApplyState
+	notified  string // version already announced
 }
 
 func NewUpdater(m *Manager) *Updater {
@@ -364,7 +365,13 @@ func (u *Updater) Check(ctx context.Context, force bool) UpdateCheck {
 	u.mu.Lock()
 	u.check, u.haveCheck, u.lastCheck = res, true, time.Now()
 	u.mu.Unlock()
-	if res.Available && res.Latest != nil && !u.m.notes.Has("update_available", "version", res.Latest.Tag) {
+	u.mu.Lock()
+	fresh := res.Available && res.Latest != nil && u.notified != res.Latest.Tag && !u.m.notes.Has("update_available", "version", res.Latest.Tag)
+	if fresh {
+		u.notified = res.Latest.Tag
+	}
+	u.mu.Unlock()
+	if fresh {
 		u.m.notes.Notify("update_available", "", map[string]string{"version": res.Latest.Tag, "channel": ch}, "")
 	}
 	return res

@@ -123,11 +123,23 @@ type SettingsView struct {
 	UpdateChannel   string   `json:"update_channel"` // "" = installed channel
 	UpdateAuto      bool     `json:"update_auto"`
 	NotifyOff       []string `json:"notify_off"`
+	GotifyOn        bool     `json:"gotify_on"`
+	GotifyURL       string   `json:"gotify_url"`
+	HasGotifyToken  bool     `json:"has_gotify_token"`
+	GotifyTypes     []string `json:"gotify_types"`
+	GotifyLang      string   `json:"gotify_lang"`
 }
 
 func settingsView(s Settings) SettingsView {
-	return SettingsView{s.TwitchToken != "", s.HasCookies, s.Proxy, s.DefaultQuality, s.DefaultInterval,
-		s.DefaultTemplate, s.RemuxAfter, s.StreamlinkBin, s.FFmpegBin, s.UpdateChannel, !s.UpdateCheckOff, append([]string{}, s.NotifyOff...)}
+	gt := append([]string{}, s.GotifyTypes...)
+	if s.GotifyTypes == nil {
+		gt = append([]string{}, notifyTypes...)
+	}
+	return SettingsView{HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
+		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
+		RemuxAfter: s.RemuxAfter, StreamlinkBin: s.StreamlinkBin, FFmpegBin: s.FFmpegBin, UpdateChannel: s.UpdateChannel,
+		UpdateAuto: !s.UpdateCheckOff, NotifyOff: append([]string{}, s.NotifyOff...),
+		GotifyOn: s.GotifyOn, GotifyURL: s.GotifyURL, HasGotifyToken: s.GotifyToken != "", GotifyTypes: gt, GotifyLang: s.GotifyLang}
 }
 
 // ----------------------------------------------------------- recordings
@@ -506,6 +518,11 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		UpdateChannel   *string   `json:"update_channel"`
 		UpdateAuto      *bool     `json:"update_auto"`
 		NotifyOff       *[]string `json:"notify_off"`
+		GotifyOn        *bool     `json:"gotify_on"`
+		GotifyURL       *string   `json:"gotify_url"`
+		GotifyToken     *string   `json:"gotify_token"` // nil = keep, "" = clear
+		GotifyTypes     *[]string `json:"gotify_types"`
+		GotifyLang      *string   `json:"gotify_lang"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -561,6 +578,47 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 			off = append(off, t)
 		}
 		s.NotifyOff = off
+	}
+	if in.GotifyURL != nil {
+		u := strings.TrimSpace(*in.GotifyURL)
+		if u != "" {
+			c, err := cleanGotifyURL(u)
+			if err != nil {
+				writeErr(w, errBad(err.Error()))
+				return
+			}
+			u = c
+		}
+		s.GotifyURL = u
+	}
+	if in.GotifyToken != nil {
+		s.GotifyToken = strings.TrimSpace(*in.GotifyToken)
+	}
+	if in.GotifyLang != nil {
+		l := strings.TrimSpace(*in.GotifyLang)
+		if l != "" && len(a.m.gotify.locale(l)) == 0 {
+			writeErr(w, errBad("unknown language: "+l))
+			return
+		}
+		s.GotifyLang = l
+	}
+	if in.GotifyTypes != nil {
+		gt := []string{}
+		for _, t := range *in.GotifyTypes {
+			if !validNotifyType(t) {
+				writeErr(w, errBad("unknown notification type: "+t))
+				return
+			}
+			gt = append(gt, t)
+		}
+		s.GotifyTypes = gt
+	}
+	if in.GotifyOn != nil {
+		s.GotifyOn = *in.GotifyOn
+	}
+	if s.GotifyOn && (s.GotifyURL == "" || s.GotifyToken == "") {
+		writeErr(w, errBad("Gotify needs a server URL and an application token"))
+		return
 	}
 	if in.UpdateAuto != nil {
 		s.UpdateCheckOff = !*in.UpdateAuto
@@ -805,6 +863,8 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/notifications", a.listNotifications)
 	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
 	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
+	mux.HandleFunc("GET /api/gotify", a.gotifyStatus)
+	mux.HandleFunc("POST /api/gotify/test", a.gotifyTest)
 	mux.HandleFunc("GET /icons/{file}", a.serveIcon)
 	mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.upd.Status()) })
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {

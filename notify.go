@@ -41,6 +41,7 @@ type Notifier struct {
 	d     notifyFile
 	muted func() []string
 	seen  map[string]time.Time // dedupe key -> last time
+	sink  func(Notification)   // external delivery (Gotify); runs for muted types too
 }
 
 func OpenNotifier(path string, muted func() []string) *Notifier {
@@ -88,28 +89,37 @@ func (n *Notifier) Notify(typ, platform string, params map[string]string, dedupe
 	if n == nil {
 		return
 	}
+	isMuted := false
 	if n.muted != nil {
 		for _, t := range n.muted() {
 			if t == typ {
-				return
+				isMuted = true
 			}
 		}
 	}
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	if dedupe != "" {
 		key := typ + "|" + dedupe
 		if t, ok := n.seen[key]; ok && time.Since(t) < dedupeWindow {
+			n.mu.Unlock()
 			return
 		}
 		n.seen[key] = time.Now()
 	}
-	n.d.Items = append(n.d.Items, Notification{ID: n.d.Next, Time: time.Now(), Type: typ, Level: levelFor(typ), Platform: platform, Params: params})
-	n.d.Next++
-	if len(n.d.Items) > maxNotifications {
-		n.d.Items = n.d.Items[len(n.d.Items)-maxNotifications:]
+	it := Notification{ID: n.d.Next, Time: time.Now(), Type: typ, Level: levelFor(typ), Platform: platform, Params: params}
+	if !isMuted {
+		n.d.Items = append(n.d.Items, it)
+		n.d.Next++
+		if len(n.d.Items) > maxNotifications {
+			n.d.Items = n.d.Items[len(n.d.Items)-maxNotifications:]
+		}
+		n.saveLocked()
 	}
-	n.saveLocked()
+	sink := n.sink
+	n.mu.Unlock()
+	if sink != nil {
+		sink(it)
+	}
 }
 
 // Has reports whether an event of this type with params[key]==val is already logged.
