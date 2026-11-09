@@ -439,3 +439,15 @@ nav a { white-space: nowrap; }
 @media (max-width: 400px) {
   .topbar .brand > span:not(.logo) { display: none; } /* the bell needs the room */
 }
+
+/* ---- v-fix: channel card actions fill the card; top bar stays one row on tablets/landscape ---- */
+.card.ch > .row { gap: 6px; flex-wrap: wrap; }
+.card.ch > .row .btn { flex: 1 1 auto; text-align: center; justify-content: center; }
+.card.ch > .row .btn.primary, .card.ch > .row .btn.danger { flex: 1 1 100%; }
+@media (min-width: 721px) and (max-width: 1100px) {
+  .topbar { flex-wrap: nowrap; gap: 8px; padding-left: 12px; padding-right: 12px; }
+  .topbar .brand > span:not(.logo) { display: none; }
+  nav a { padding: 7px 8px; }
+  .topbar select#lang { width: 110px; }
+}
+.card.ch > .row .btn[data-act=check] { flex: 0 0 auto; margin-left: auto; padding-left: 16px; padding-right: 16px; }
