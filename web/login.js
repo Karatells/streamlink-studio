@@ -1,4 +1,5 @@
 import { languages, defaultLanguage } from './languages.config.js';
+import { registerSW } from './pwa.js';
 
 const $ = (s) => document.querySelector(s);
 let dict = {}, fallback = {};
@@ -114,6 +115,7 @@ async function submit(e) {
   $('#form').addEventListener('submit', submit);
   $('#u').addEventListener('input', clearError);
   $('#p').addEventListener('input', clearError);
+  registerSW();
   await setLang(detectLang());
   document.body.classList.add('ready');
 })();

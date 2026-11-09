@@ -90,7 +90,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	static := http.FileServer(http.FS(sub))
+	static := pwaHeaders(http.FileServer(http.FS(sub)))
 	auth := NewAuth(os.Getenv("STUDIO_USER"), os.Getenv("STUDIO_PASS"), cfg.DataDir)
 	upd := NewUpdater(m)
 	api := &API{m: m, auth: auth, upd: upd}

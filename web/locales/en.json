@@ -463,5 +463,14 @@
   "tgs_no_users": "The allow-list is empty: nobody can use the bot yet.",
   "tgs_last_ok": "Last contact",
   "tgs_last_error": "Last error",
-  "tgs_sent": "messages sent: {n}"
+  "tgs_sent": "messages sent: {n}",
+  "pwa_title": "Browser app",
+  "pwa_hint": "Install Studio as an app: its own window and home-screen icon, no browser bars. It always loads fresh data from the server.",
+  "pwa_install": "Install app",
+  "pwa_dismiss": "Not now",
+  "pwa_banner": "Install Streamlink Studio as an app?",
+  "pwa_installed": "Studio is running as an installed app.",
+  "pwa_ios": "On iPhone/iPad: open this page in Safari, tap Share, then “Add to Home Screen”.",
+  "pwa_need_https": "Browsers only allow installing a site over HTTPS (or on localhost). Put Studio behind a reverse proxy with HTTPS (Caddy, nginx, Traefik, a Cloudflare tunnel…) and open it through that address. Until then, your browser menu may still offer “Add to Home screen” as a plain shortcut.",
+  "pwa_menu": "Use your browser menu: “Install app” / “Add to Home screen”. If it is not offered, the browser may have decided Studio is already installed or does not support installing."
 }

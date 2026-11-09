@@ -466,3 +466,13 @@ nav a { white-space: nowrap; }
 .lg-msg { margin-top: 4px; overflow-wrap: anywhere; }
 .lg-detail { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
 .row.filters select { max-width: 100%; }
+
+/* ---- installed browser app (standalone window): respect notches / status bar ---- */
+@media (display-mode: standalone) {
+  .topbar { height: auto; min-height: 54px; padding-top: env(safe-area-inset-top); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+  #view { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .login-wrap { padding-top: calc(16px + env(safe-area-inset-top)); }
+}
+@media (display-mode: standalone) and (max-width: 720px) {
+  .topbar { padding-top: calc(8px + env(safe-area-inset-top)); padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+}

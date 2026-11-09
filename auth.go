@@ -231,10 +231,11 @@ func (a *Auth) credsOK(u, p string) bool {
 func publicPath(p string) bool {
 	switch p {
 	case "/healthz", "/login.html", "/login.js", "/style.css", "/languages.config.js",
+		"/manifest.webmanifest", "/sw.js", "/pwa.js",
 		"/api/login", "/api/logout", "/api/auth/status":
 		return true
 	}
-	return strings.HasPrefix(p, "/locales/")
+	return strings.HasPrefix(p, "/locales/") || strings.HasPrefix(p, "/pwa/")
 }
 
 // sameOrigin blocks cross-site state-changing requests (CSRF) when the browser

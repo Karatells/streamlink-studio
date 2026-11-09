@@ -1,4 +1,5 @@
 import { languages, defaultLanguage } from './languages.config.js';
+import { registerSW, installState, promptInstall, onInstallChange, clearAppCache } from './pwa.js';
 
 /* ------------------------------------------------------------ helpers */
 const $ = (s, r = document) => r.querySelector(s);
@@ -112,6 +113,21 @@ function applyTheme() {
   if (mt) mt.content = dark ? '#0f111a' : '#ffffff';
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+
+/* ------------------------------------------------------- install banner */
+function renderInstallBanner() {
+  const bn = $('#install-banner');
+  if (!bn) return;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem('installDismissed') === '1'; } catch { /* ignore */ }
+  const st = installState();
+  bn.hidden = !(st.canInstall && !st.standalone && !dismissed);
+  if (bn.hidden) return;
+  bn.innerHTML = `<span>${esc(t('pwa_banner'))}</span><button class="btn sm primary" id="ib-go">${esc(t('pwa_install'))}</button><button class="btn sm" id="ib-no">${esc(t('pwa_dismiss'))}</button>`;
+  $('#ib-go').onclick = async () => { await promptInstall(); renderInstallBanner(); };
+  $('#ib-no').onclick = () => { try { localStorage.setItem('installDismissed', '1'); } catch { /* ignore */ } bn.hidden = true; };
+}
 
 /* -------------------------------------------------------------- state */
 let state = { channels: [], active: [], jobs: [], counts: { channels: 0, recordings: 0, saved: 0 }, update: { available: false } };
@@ -1003,6 +1019,7 @@ function systemTab(body, alive) {
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   const scrape = `scrape_configs:\n  - job_name: streamlink-studio\n    metrics_path: /metrics\n    authorization:\n      credentials: <STUDIO_METRICS_TOKEN>\n    static_configs:\n      - targets: ['${location.host}']`;
   body.innerHTML = `<fieldset class="card"><legend>${esc(t('hc_title'))}</legend><div id="hc"><div class="muted">${esc(t('loading'))}</div></div></fieldset>
+    <fieldset class="card"><legend>${esc(t('pwa_title'))}</legend><div id="pwa-card"></div></fieldset>
     <fieldset class="card"><legend>${esc(t('mon_title'))}</legend>
       <div class="muted small" style="margin-bottom:8px">${esc(t('mon_hint'))}</div>
       <div class="field"><label>${esc(t('mon_metrics_url'))}</label><div class="cmd"><code>${esc(base)}metrics</code><button class="btn sm" data-copy="${esc(base)}metrics">${esc(t('upd_copy'))}</button></div></div>
@@ -1012,6 +1029,22 @@ function systemTab(body, alive) {
         <div class="row"><a class="btn sm" href="grafana/streamlink-studio-dashboard.json" download>⬇ ${esc(t('mon_grafana_dl'))}</a></div>
         <span class="muted small">${esc(t('mon_grafana_hint'))}</span></div>
     </fieldset>`;
+  const renderPwa = () => {
+    const el = $('#pwa-card');
+    if (!el || alive.stop) return;
+    const st = installState();
+    let html = `<div class="muted small" style="margin-bottom:8px">${esc(t('pwa_hint'))}</div>`;
+    if (st.standalone) html += `<div>✓ ${esc(t('pwa_installed'))}</div>`;
+    else if (st.canInstall) html += `<button class="btn primary" id="pwa-install">⬇ ${esc(t('pwa_install'))}</button>`;
+    else if (st.ios) html += `<div class="small">${esc(t('pwa_ios'))}</div>`;
+    else if (!st.secure) html += `<div class="small">${esc(t('pwa_need_https'))}</div>`;
+    else html += `<div class="small">${esc(t('pwa_menu'))}</div>`;
+    el.innerHTML = html;
+    const b = $('#pwa-install', el);
+    if (b) b.onclick = async () => { await promptInstall(); renderPwa(); };
+  };
+  renderPwa();
+  onInstallChange(renderPwa);
   body.addEventListener('click', (e) => {
     const b = e.target.closest('[data-copy]');
     if (b) navigator.clipboard?.writeText(b.dataset.copy).then(() => toast(t('copied')), () => {});
@@ -1355,6 +1388,8 @@ window.addEventListener('hashchange', route);
 
 /* ---------------------------------------------------------------- init */
 (async function init() {
+  registerSW();
+  onInstallChange(renderInstallBanner);
   fallback = await loadLocale(defaultLanguage);
   const sel = $('#lang');
   sel.innerHTML = languages.map((l) => `<option value="${l.code}">${esc(l.name)}</option>`).join('');
@@ -1369,7 +1404,7 @@ window.addEventListener('hashchange', route);
     if (a.auth_required) {
       if (!a.authenticated) { location.href = 'login.html'; return; }
       $('#logout').hidden = false;
-      $('#logout').onclick = async () => { try { await fetch('api/logout', { method: 'POST' }); } finally { location.href = 'login.html'; } };
+      $('#logout').onclick = async () => { try { await fetch('api/logout', { method: 'POST' }); await clearAppCache(); } finally { location.href = 'login.html'; } };
     }
   } catch { /* ignore */ }
   try { settings = await api('GET', '/settings'); } catch { /* ignore */ }
