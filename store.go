@@ -37,17 +37,18 @@ type Channel struct {
 
 // Settings holds global defaults and global credentials.
 type Settings struct {
-	TwitchToken     string `json:"twitch_token"`
-	HasCookies      bool   `json:"has_cookies"`
-	Proxy           string `json:"proxy"`
-	DefaultQuality  string `json:"default_quality"`
-	DefaultInterval int    `json:"default_interval"`
-	DefaultTemplate string `json:"default_template"`
-	RemuxAfter      bool   `json:"remux_after"`
-	StreamlinkBin   string `json:"streamlink_bin"`
-	FFmpegBin       string `json:"ffmpeg_bin"`
-	UpdateChannel   string `json:"update_channel"`   // "" = the channel the program was installed from
-	UpdateCheckOff  bool   `json:"update_check_off"` // automatic checks disabled
+	TwitchToken     string   `json:"twitch_token"`
+	HasCookies      bool     `json:"has_cookies"`
+	Proxy           string   `json:"proxy"`
+	DefaultQuality  string   `json:"default_quality"`
+	DefaultInterval int      `json:"default_interval"`
+	DefaultTemplate string   `json:"default_template"`
+	RemuxAfter      bool     `json:"remux_after"`
+	StreamlinkBin   string   `json:"streamlink_bin"`
+	FFmpegBin       string   `json:"ffmpeg_bin"`
+	UpdateChannel   string   `json:"update_channel"`   // "" = the channel the program was installed from
+	UpdateCheckOff  bool     `json:"update_check_off"` // automatic checks disabled
+	NotifyOff       []string `json:"notify_off"`       // muted notification types
 }
 
 type storeData struct {

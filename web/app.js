@@ -46,12 +46,28 @@ async function api(method, path, body, raw) {
   return data;
 }
 
-function toast(msg, isErr) {
+function toast(msg, isErr, href) {
   const el = document.createElement('div');
-  el.className = 'toast' + (isErr ? ' err' : '');
+  el.className = 'toast' + (isErr ? ' err' : '') + (href ? ' link' : '');
   el.textContent = msg;
+  if (href) el.onclick = () => { location.hash = href; el.remove(); };
   $('#toasts').append(el);
   setTimeout(() => el.remove(), isErr ? 7000 : 3500);
+}
+
+/* Platform badges. Official logos are trademarked, so the default is a neutral monogram;
+   a file <data>/icons/<platform>.svg|png|webp (e.g. twitch.svg) replaces it automatically. */
+const PLATFORM_HUE = { twitch: 265, youtube: 2, kick: 108, niconico: 30, tiktok: 335, facebook: 215, vimeo: 195, dailymotion: 220, trovo: 150, bilibili: 200 };
+const PLATFORM_MONO = { twitch: 'Tw', youtube: 'YT', kick: 'K', niconico: 'Nn', tiktok: 'TT', facebook: 'Fb' };
+function platformBadge(name, big) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return '';
+  const file = state.icons?.[n];
+  if (file) return `<img class="pico${big ? ' lg' : ''}" src="icons/${encodeURIComponent(file)}" alt="${esc(n)}" title="${esc(n)}">`;
+  let hue = PLATFORM_HUE[n];
+  if (hue === undefined) { hue = 0; for (const ch of n) hue = (hue * 31 + ch.charCodeAt(0)) % 360; }
+  const mono = PLATFORM_MONO[n] || (n.charAt(0).toUpperCase() + n.charAt(1));
+  return `<span class="pbadge${big ? ' lg' : ''}" style="--h:${hue}" title="${esc(n)}" aria-label="${esc(n)}">${esc(mono)}</span>`;
 }
 const guard = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { toast(e.message, true); } };
 
@@ -117,6 +133,11 @@ function renderShell() {
     a.innerHTML = `<span class="nl">${esc(label)}</span>${count === null ? '' : ` <span class="nc">(${count})</span>`}`;
     if (a.dataset.route === 'settings' && upd) a.insertAdjacentHTML('beforeend', '<i class="dot"></i>');
   });
+  const unread = state.notifications?.unread || 0;
+  const badge = $('#bell-badge');
+  if (badge) { badge.hidden = !unread; badge.textContent = unread > 99 ? '99+' : String(unread); }
+  const bell = $('#bell');
+  if (bell) { bell.title = t('nav_notifications'); bell.setAttribute('aria-label', t('nav_notifications')); bell.classList.toggle('active', location.hash.startsWith('#/notifications')); }
   const bn = $('#update-banner');
   if (bn) {
     bn.hidden = !upd || /^#\/settings\/updates/.test(location.hash);
@@ -125,11 +146,28 @@ function renderShell() {
   applyTheme();
 }
 
+/* toasts for events that happened while the page was open */
+let seenNote = null;
+async function announceNew() {
+  const last = state.notifications?.last_id ?? 0;
+  if (seenNote === null) { seenNote = last; return; }
+  if (last <= seenNote) return;
+  const from = seenNote;
+  seenNote = last;
+  if (location.hash.startsWith('#/notifications')) return;
+  try {
+    const d = await api('GET', '/notifications');
+    d.items.filter((n) => n.id > from && n.type !== 'job_started').slice(0, 3).reverse()
+      .forEach((n) => toast(notifIcon(n) + ' ' + notifText(n), n.level === 'error', notifLink(n)));
+  } catch { /* ignore */ }
+}
+
 async function refresh() {
   if (document.hidden) return;
   try {
     state = await api('GET', '/state');
     renderShell();
+    announceNew();
     if (current?.update) await current.update();
   } catch { /* server temporarily unreachable */ }
 }
@@ -192,7 +230,7 @@ function channelsView() {
     const act = state.active;
     $('#active').innerHTML = act.length
       ? act.map((c) => `<div class="active-row">
-          <span class="badge recording">LIVE</span><b>${esc(c.display_name)}</b>
+          <span class="badge recording">LIVE</span>${platformBadge(c.plugin)}<b>${esc(c.display_name)}</b>
           <span class="muted">${esc(c.recording_quality || c.quality || settings.default_quality || 'best')}</span>
           ${c.auth_active ? `<span class="badge ok">🔑 ${esc(t('auth_active'))}</span>` : ''}
           <span class="muted small">${esc(t('recording_for'))} ${fmtDur((Date.now() - new Date(c.recording_since)) / 1000)}</span>
@@ -201,7 +239,7 @@ function channelsView() {
       : `<div class="muted">${esc(t('no_active'))}</div>`;
     $('#list').innerHTML = state.channels.length
       ? state.channels.map((c) => `<div class="card ch">
-          <div class="head"><div class="avatar">${esc(c.display_name.slice(0, 1))}</div>
+          <div class="head">${platformBadge(c.plugin, true) || `<div class="avatar">${esc(c.display_name.slice(0, 1))}</div>`}
             <div style="min-width:0;flex:1"><div class="name" title="${esc(c.url)}">${esc(c.display_name)}</div>
             <div class="muted small">${esc(c.plugin)}</div></div>${statusBadge(c)}</div>
           <div class="kv"><span>${esc(t('auto_rec'))}: <b>${c.auto_record ? t('on') : t('off')}</b></span><span>${esc(authLine(c))}</span></div>
@@ -350,14 +388,48 @@ function dayLabel(key) { // key = yyyy-mm-dd
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function recordingsView(savedMode) {
+function recTabs(active) {
+  const running = state.jobs.filter((j) => j.status === 'running').length;
+  return `<div class="tabs" role="tablist">
+    <a role="tab" class="tab${active === 'list' ? ' active' : ''}" href="#/recordings">${esc(t('rec_tab_list'))}</a>
+    <a role="tab" class="tab${active === 'jobs' ? ' active' : ''}" href="#/recordings/jobs">${esc(t('rec_tab_jobs'))}<span class="tab-badge" id="jt-badge" ${running ? '' : 'hidden'}>${running}</span></a></div>`;
+}
+
+const fmtJobTime = (d) => new Date(d).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
+function jobsView() {
+  $('#view').innerHTML = `${recTabs('jobs')}<div id="jobs-wrap"></div>`;
+  let sig = '';
+  const update = () => {
+    const s = JSON.stringify(state.jobs);
+    if (s === sig) return;
+    sig = s;
+    const jobs = state.jobs;
+    $('#jobs-wrap').innerHTML = jobs.length ? jobs.map((j) => {
+      const pct = j.progress >= 0 ? Math.round(j.progress * 100) : null;
+      const label = j.status === 'running' ? t('job_running') : j.status === 'done' ? t('job_done') : t('job_failed');
+      return `<div class="card job ${j.status}">
+        <div class="job-head"><b>${esc(t('job_' + j.type))}</b><span class="badge ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'error' : ''}">${esc(label)}</span>
+          <span class="grow"></span><span class="muted small">${esc(fmtJobTime(j.started))}</span></div>
+        <div class="job-files"><div class="muted small">${esc(t('job_from'))}</div><div class="fname">${esc(j.input)}</div>
+          <div class="muted small">${esc(t('job_to'))}</div><div class="fname">${esc(j.output)}</div></div>
+        ${j.status === 'running' ? `<div class="row"><div class="progress ${pct === null ? 'indet' : ''}" style="flex:1"><i style="width:${pct ?? 35}%"></i></div><span class="small">${pct === null ? '' : pct + '%'}</span></div>` : ''}
+        ${j.error ? `<div class="errtxt">${esc(j.error)}</div>` : ''}</div>`;
+    }).join('') : `<div class="card"><div class="empty">${esc(t('jobs_none'))}</div></div>`;
+  };
+  update();
+  return { update };
+}
+
+function recordingsView(savedMode, sub) {
+  if (!savedMode && sub === 'jobs') return jobsView();
   const filter = savedMode ? filters.saved : filters.all;
   const sel = new Set();          // selected file names
   const collapsed = new Set();    // collapsed group keys
   let visible = [];               // names in display order (for shift-click ranges)
   let lastIdx = -1;
   let lastSig = '';
-  $('#view').innerHTML = `
+  $('#view').innerHTML = `${savedMode ? '' : recTabs('list')}
     <div class="row filters" style="margin-bottom:8px">
       <input type="search" id="q" class="grow" placeholder="${esc(t('rec_search'))}" value="${esc(filter.q)}">
       <select id="st"></select>
@@ -368,8 +440,7 @@ function recordingsView(savedMode) {
     <div id="chips" class="chips"></div>
     <div id="tbl"></div>
     <div class="muted small" id="sum" style="margin-top:8px"></div>
-    <div id="bulk" class="bulkbar" hidden></div>
-    <div id="jobs-wrap"></div>`;
+    <div id="bulk" class="bulkbar" hidden></div>`;
 
   const byName = () => new Map(recs.map((r) => [r.name, r]));
   const selectable = (r) => !r.recording;
@@ -405,7 +476,7 @@ function recordingsView(savedMode) {
   const rowHtml = (r) => `<tr class="${sel.has(r.name) ? 'selected' : ''}">
     <td class="sel"><input type="checkbox" data-sel="${esc(r.name)}" aria-label="${esc(t('rec_select'))}" ${sel.has(r.name) ? 'checked' : ''} ${selectable(r) ? '' : 'disabled'}></td>
     <td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
-    <td data-label="${esc(t('col_streamer'))}"><button class="nick${filter.streamer === r.streamer ? ' on' : ''}" data-a="streamer" data-n="${esc(r.streamer)}" title="${esc(t('rec_filter_streamer'))}">${esc(r.streamer)}</button>${r.platform ? ` <span class="muted small">· ${esc(r.platform)}</span>` : ''}</td>
+    <td data-label="${esc(t('col_streamer'))}"><button class="nick${filter.streamer === r.streamer ? ' on' : ''}" data-a="streamer" data-n="${esc(r.streamer)}" title="${esc(t('rec_filter_streamer'))}">${esc(r.streamer)}</button>${r.platform ? ` ${platformBadge(r.platform)}` : ''}</td>
     <td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
     <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
     <td><div class="actions">
@@ -474,16 +545,11 @@ function recordingsView(savedMode) {
     if (sel_.innerHTML !== html) sel_.innerHTML = html;
   };
 
-  const renderJobs = () => {
-    const jobs = state.jobs;
-    $('#jobs-wrap').innerHTML = jobs.length ? `<h2>${esc(t('jobs_title'))}</h2><div class="card">${jobs.slice(0, 12).map((j) => {
-      const label = j.status === 'running' ? t('job_running') : j.status === 'done' ? t('job_done') : t('job_failed');
-      const pct = j.progress >= 0 ? Math.round(j.progress * 100) : null;
-      return `<div class="active-row"><b>${esc(t('job_' + j.type))}</b><span class="muted small">${esc(j.input)} → ${esc(j.output)}</span><span class="grow"></span>
-        ${j.status === 'running' ? `<div class="progress ${pct === null ? 'indet' : ''}"><i style="width:${pct ?? 35}%"></i></div><span class="small">${pct === null ? '' : pct + '%'}</span>`
-        : `<span class="badge ${j.status === 'done' ? 'ok' : 'error'}">${esc(label)}</span>`}
-        ${j.error ? `<span class="errtxt">${esc(j.error)}</span>` : ''}</div>`;
-    }).join('')}</div>` : '';
+  const renderJobsBadge = () => {
+    const el = $('#jt-badge');
+    if (!el) return;
+    const running = state.jobs.filter((j) => j.status === 'running').length;
+    el.hidden = !running; el.textContent = running;
   };
 
   const setStreamer = (name) => { filter.streamer = name; renderStreamers(); render(); };
@@ -587,11 +653,11 @@ function recordingsView(savedMode) {
     const sig = JSON.stringify(recs);
     const names = new Set(recs.map((r) => r.name));
     for (const n of [...sel]) if (!names.has(n)) sel.delete(n); // files that vanished
-    renderStreamers(); renderJobs();
+    renderStreamers(); renderJobsBadge();
     if (sig !== lastSig) { lastSig = sig; render(); }
   };
   update().catch(() => {});
-  return { update };
+  return { update: () => { renderJobsBadge(); return update(); } };
 }
 
 function playerModal(rec) {
@@ -751,9 +817,11 @@ function fmtUptime(sec) {
   return d ? t('st_uptime_d', { d, h }) : h ? t('st_uptime_h', { h, m }) : t('st_uptime_m', { m });
 }
 
+const platformIcon = (name) => (PLATFORM_HUE[String(name).toLowerCase()] !== undefined || state.icons?.[String(name).toLowerCase()]) ? platformBadge(name) + ' ' : '';
+
 function statsTab(body, alive) {
   const bars = (items, total) => items.length ? `<div class="hbars">${items.map((g) => `<div class="hbar">
-      <div class="hbar-top"><span class="hbar-name">${esc(g.name)}</span><span class="muted small">${esc(t('st_files_n', { count: g.count }))} · ${fmtSize(g.size)}</span></div>
+      <div class="hbar-top"><span class="hbar-name">${platformIcon(g.name)}${esc(g.name)}</span><span class="muted small">${esc(t('st_files_n', { count: g.count }))} · ${fmtSize(g.size)}</span></div>
       <div class="meter"><i style="width:${total ? Math.max(2, (g.size / total) * 100) : 0}%"></i></div></div>`).join('')}</div>` : `<div class="muted">${esc(t('st_no_data'))}</div>`;
 
   async function load() {
@@ -915,8 +983,100 @@ function updatesTab(body, alive) {
   load().then(() => { if (st && applying()) watch(); }).catch((e) => toast(e.message, true));
 }
 
+/* ------------------------------------------------- notifications page */
+const NOTIF_ICON = { stream_live: '🔴', stream_ended: '⏹', rec_failed: '⚠️', auth_error: '🔑', job_started: '⚙️', job_done: '✅', job_failed: '❌', update_available: '⬆️' };
+const NOTIF_GROUP = { stream_live: 'streams', stream_ended: 'streams', job_started: 'jobs', job_done: 'jobs', job_failed: 'jobs', rec_failed: 'system', auth_error: 'system', update_available: 'system' };
+const notifIcon = (n) => NOTIF_ICON[n.type] || '🔔';
+
+function notifText(n) {
+  const p = n.params || {};
+  return t('ntf_' + n.type, {
+    channel: p.channel || '', title: p.title || '', error: p.error || '', input: p.input || '', output: p.output || '',
+    kind: p.kind ? t('job_' + p.kind) : '', version: p.version || '', channel_type: p.channel ? t('upd_ch_' + p.channel) : '',
+  }) + (n.type === 'stream_live' && p.recording ? ' · ' + t('ntf_recording_started') : '');
+}
+
+function notifLink(n) {
+  switch (n.type) {
+    case 'job_started': case 'job_failed': return '#/recordings/jobs';
+    case 'job_done': return '#/recordings';
+    case 'update_available': return '#/settings/updates';
+    default: return '#/channels';
+  }
+}
+
+function notificationsView() {
+  let items = [], lastRead = 0, firstUnread = null, sig = '', markTimer = null;
+  const f = { group: 'all' };
+  const view = { destroy() { clearTimeout(markTimer); } };
+  $('#view').innerHTML = `<div class="notif-page">
+    <div class="row between"><h2 style="margin:0">${esc(t('ntf_title'))}</h2>
+      <div class="row"><button class="btn sm" id="n-read">✓ ${esc(t('ntf_mark_read'))}</button><button class="btn sm danger" id="n-clear">🗑 ${esc(t('ntf_clear'))}</button></div></div>
+    <div class="chips" id="n-filter"></div>
+    <div id="n-list"></div>
+    <details class="card" id="n-prefs"><summary>⚙ ${esc(t('ntf_prefs'))}</summary><div class="muted small" style="margin:6px 0">${esc(t('ntf_prefs_hint'))}</div><div id="n-prefs-body"></div></details></div>`;
+
+  const renderFilter = () => {
+    $('#n-filter').innerHTML = ['all', 'streams', 'jobs', 'system'].map((g) =>
+      `<button class="chipbtn${f.group === g ? ' on' : ''}" data-g="${g}">${esc(t('ntf_group_' + g))}</button>`).join('');
+  };
+  const render = () => {
+    const rows = items.filter((n) => f.group === 'all' || NOTIF_GROUP[n.type] === f.group);
+    if (!rows.length) { $('#n-list').innerHTML = `<div class="card"><div class="empty">${esc(t('ntf_none'))}</div></div>`; return; }
+    const groups = new Map();
+    for (const n of rows) {
+      const k = ymd(new Date(n.time));
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(n);
+    }
+    $('#n-list').innerHTML = [...groups].map(([k, list]) => `<section class="grp"><div class="grp-head"><b>${esc(dayLabel(k))}</b><span class="muted small">${list.length}</span></div>
+      <div class="card ntf-card">${list.map((n) => `<a class="ntf l-${n.level}${n.id > firstUnread ? ' unread' : ''}" href="${notifLink(n)}">
+        <span class="ntf-ico">${n.platform ? platformBadge(n.platform, true) : `<span class="ntf-emoji">${notifIcon(n)}</span>`}</span>
+        <span class="ntf-main"><span class="ntf-text">${esc(notifText(n))}</span>
+          <span class="muted small">${n.platform ? esc(n.platform) + ' · ' : ''}${esc(new Date(n.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></span>
+        ${n.id > firstUnread ? '<i class="udot"></i>' : ''}</a>`).join('')}</div></section>`).join('');
+  };
+  const renderPrefs = () => {
+    const off = new Set(settings.notify_off || []);
+    $('#n-prefs-body').innerHTML = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available']
+      .map((k) => `<label class="check"><input type="checkbox" data-type="${k}" ${off.has(k) ? '' : 'checked'}> ${notifIcon({ type: k })} ${esc(t('ntf_type_' + k))}</label>`).join('');
+  };
+  const scheduleRead = () => {
+    clearTimeout(markTimer);
+    if (!items.some((n) => n.id > lastRead)) return;
+    markTimer = setTimeout(async () => {
+      try { await api('POST', '/notifications/read'); lastRead = items.length ? items[0].id : lastRead; refresh(); } catch { /* ignore */ }
+    }, 1500);
+  };
+
+  $('#n-filter').addEventListener('click', (e) => { const b = e.target.closest('[data-g]'); if (b) { f.group = b.dataset.g; renderFilter(); render(); } });
+  $('#n-read').onclick = guard(async () => { await api('POST', '/notifications/read'); firstUnread = Infinity; render(); refresh(); });
+  $('#n-clear').onclick = guard(async () => {
+    if (!confirm(t('ntf_clear_confirm'))) return;
+    await api('DELETE', '/notifications'); items = []; render(); refresh();
+  });
+  $('#n-prefs-body').addEventListener('change', guard(async () => {
+    const off = $$('#n-prefs-body [data-type]').filter((c) => !c.checked).map((c) => c.dataset.type);
+    settings = await api('PUT', '/settings', { notify_off: off }); toast(t('saved'));
+  }));
+
+  const update = async () => {
+    const d = await api('GET', '/notifications');
+    const s = JSON.stringify(d.items) + d.last_read;
+    if (firstUnread === null) firstUnread = d.last_read; // items newer than this are shown as "new"
+    lastRead = d.last_read;
+    if (s !== sig) { sig = s; items = d.items; render(); }
+    scheduleRead();
+  };
+  renderFilter();
+  api('GET', '/settings').then((st) => { settings = st; renderPrefs(); }).catch(() => {});
+  update().catch((e) => toast(e.message, true));
+  view.update = update;
+  return view;
+}
+
 /* -------------------------------------------------------------- router */
-const views = { channels: channelsView, recordings: () => recordingsView(false), saved: () => recordingsView(true), settings: settingsView };
+const views = { channels: channelsView, recordings: (a) => recordingsView(false, a), saved: () => recordingsView(true), settings: settingsView, notifications: notificationsView };
 function route() {
   const m = location.hash.match(/^#\/(\w+)(?:\/(\w+))?/) || [];
   const name = m[1];

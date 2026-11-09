@@ -7,6 +7,9 @@ and lets you play, convert and trim recordings in the browser.
 * **Auto-monitoring & recording** – a background poller checks every channel and starts recording when it goes live.
 * **Auth & plugins** – Twitch OAuth token (ad-free / sub-only), `cookies.txt` (YouTube members-only, 18+), HTTP proxy & headers (Kick), plugin e-mail/password. Global credentials with per-channel overrides.
 * **Recordings library** – list grouped by day (Today / Yesterday / …) or by streamer, search, click a nick to filter by it, in-browser player (HTTP range seeking), download, delete.
+* **Processing tab** – converting, trimming and merging jobs live on their own sub-tab of the Recordings page (with a running-jobs counter) instead of cluttering the list.
+* **Notifications** – a bell in the top bar (unread counter) opens a page with the event log: streamer went live / ended the stream, recording or authorization problems, processing started / finished / failed, update available. New events also pop up as toasts. What to notify about can be switched per type on that page; the log keeps the last 300 events in `<data>/notifications.json`. Repeated identical errors are collapsed (1 h), and streams that are already live when Studio starts do not produce a "went live" event.
+* **Platform icons** – channels, recordings, statistics and notifications show a platform badge. Official logos are trademarks, so Studio ships neutral monogram badges (Tw, YT, K, …); to use real logos put files named after the platform into `<data>/icons/` (e.g. `twitch.svg`, `kick.png`, `youtube.webp`) – they are picked up without a restart.
 * **Bulk actions** – tick several files (shift-click selects a range, a group checkbox selects a whole day) to delete them, **merge** them or move them to the **Saved** tab. Merging joins the files from the oldest to the newest start time with ffmpeg's concat demuxer and stream copy (no re-encoding; all files must share one format, optionally delete the originals afterwards).
 * **Converter & trim editor** – lossless TS/MKV/FLV → MP4 remux; visual IN/OUT timeline with *Fast Cut* (lossless) or *Accurate Cut* (re-encode).
 * **UI** – English / Українська / Русский (add more by dropping a JSON file), dark / light / auto theme.
@@ -112,7 +115,7 @@ Copy `web/locales/en.json` to `web/locales/es.json`, translate it, and register 
 
 ## API (used by the UI)
 
-`GET /api/state` · `GET /api/stats` · `GET|PUT /api/settings` · `POST /api/channels` · `PUT|DELETE /api/channels/{id}` ·
+`GET /api/state` · `GET /api/stats` · `GET|DELETE /api/notifications` · `POST /api/notifications/read` · `GET /icons/{file}` · `GET|PUT /api/settings` · `POST /api/channels` · `PUT|DELETE /api/channels/{id}` ·
 `POST /api/channels/{id}/{record|stop|check}` · `POST /api/channels/test` · `PUT|DELETE /api/channels/{id}/cookies` ·
 `GET /api/recordings` · `GET /api/recordings/{name}/{stream|download}` · `DELETE /api/recordings/{name}` ·
 `POST /api/recordings/{name}/{convert|trim}` · `POST /api/recordings/{delete|save|merge}` · `GET /api/jobs` · `GET /healthz`

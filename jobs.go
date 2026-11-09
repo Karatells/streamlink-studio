@@ -40,7 +40,19 @@ func (m *Manager) newJob(typ, in, out string) *Job {
 		m.jobs = keep
 	}
 	m.mu.Unlock()
+	m.jobEvent(j, "job_started")
 	return j
+}
+
+// jobEvent records a processing notification (Input/Output never change after creation).
+func (m *Manager) jobEvent(j *Job, typ string) {
+	p := map[string]string{"kind": j.Type, "input": j.Input, "output": j.Output}
+	if typ == "job_failed" {
+		m.mu.Lock()
+		p["error"] = j.Error
+		m.mu.Unlock()
+	}
+	m.notes.Notify(typ, "", p, "")
 }
 
 // Jobs returns a snapshot, newest first.
@@ -87,10 +99,12 @@ func (m *Manager) runFFmpeg(j *Job, args []string, probeInput string, expect flo
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		m.setJob(j, func(j *Job) { j.Status, j.Error = "error", err.Error() })
+		m.jobEvent(j, "job_failed")
 		return err
 	}
 	if err := cmd.Start(); err != nil {
 		m.setJob(j, func(j *Job) { j.Status, j.Error = "error", err.Error() })
+		m.jobEvent(j, "job_failed")
 		return err
 	}
 	sc := bufio.NewScanner(stdout)
@@ -115,9 +129,11 @@ func (m *Manager) runFFmpeg(j *Job, args []string, probeInput string, expect flo
 		}
 		_ = os.Remove(args[len(args)-1]) // partial output
 		m.setJob(j, func(j *Job) { j.Status, j.Error = "error", msg })
+		m.jobEvent(j, "job_failed")
 		return fmt.Errorf("%s", msg)
 	}
 	m.setJob(j, func(j *Job) { j.Status, j.Progress = "done", 1 })
+	m.jobEvent(j, "job_done")
 	return nil
 }
 

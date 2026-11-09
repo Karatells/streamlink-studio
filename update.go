@@ -364,6 +364,9 @@ func (u *Updater) Check(ctx context.Context, force bool) UpdateCheck {
 	u.mu.Lock()
 	u.check, u.haveCheck, u.lastCheck = res, true, time.Now()
 	u.mu.Unlock()
+	if res.Available && res.Latest != nil && !u.m.notes.Has("update_available", "version", res.Latest.Tag) {
+		u.m.notes.Notify("update_available", "", map[string]string{"version": res.Latest.Tag, "channel": ch}, "")
+	}
 	return res
 }
 

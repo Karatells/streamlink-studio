@@ -111,22 +111,23 @@ func (a *API) view(ch Channel) ChannelView {
 }
 
 type SettingsView struct {
-	HasTwitchToken  bool   `json:"has_twitch_token"`
-	HasCookies      bool   `json:"has_cookies"`
-	Proxy           string `json:"proxy"`
-	DefaultQuality  string `json:"default_quality"`
-	DefaultInterval int    `json:"default_interval"`
-	DefaultTemplate string `json:"default_template"`
-	RemuxAfter      bool   `json:"remux_after"`
-	StreamlinkBin   string `json:"streamlink_bin"`
-	FFmpegBin       string `json:"ffmpeg_bin"`
-	UpdateChannel   string `json:"update_channel"` // "" = installed channel
-	UpdateAuto      bool   `json:"update_auto"`
+	HasTwitchToken  bool     `json:"has_twitch_token"`
+	HasCookies      bool     `json:"has_cookies"`
+	Proxy           string   `json:"proxy"`
+	DefaultQuality  string   `json:"default_quality"`
+	DefaultInterval int      `json:"default_interval"`
+	DefaultTemplate string   `json:"default_template"`
+	RemuxAfter      bool     `json:"remux_after"`
+	StreamlinkBin   string   `json:"streamlink_bin"`
+	FFmpegBin       string   `json:"ffmpeg_bin"`
+	UpdateChannel   string   `json:"update_channel"` // "" = installed channel
+	UpdateAuto      bool     `json:"update_auto"`
+	NotifyOff       []string `json:"notify_off"`
 }
 
 func settingsView(s Settings) SettingsView {
 	return SettingsView{s.TwitchToken != "", s.HasCookies, s.Proxy, s.DefaultQuality, s.DefaultInterval,
-		s.DefaultTemplate, s.RemuxAfter, s.StreamlinkBin, s.FFmpegBin, s.UpdateChannel, !s.UpdateCheckOff}
+		s.DefaultTemplate, s.RemuxAfter, s.StreamlinkBin, s.FFmpegBin, s.UpdateChannel, !s.UpdateCheckOff, append([]string{}, s.NotifyOff...)}
 }
 
 // ----------------------------------------------------------- recordings
@@ -214,7 +215,8 @@ func (a *API) state(w http.ResponseWriter, r *http.Request) {
 		upd = map[string]any{"available": true, "version": c.Latest.Tag}
 	}
 	writeJSON(w, 200, map[string]any{"channels": views, "active": active, "jobs": a.m.Jobs(),
-		"counts": map[string]int{"channels": len(views), "recordings": n, "saved": nSaved}, "update": upd})
+		"counts": map[string]int{"channels": len(views), "recordings": n, "saved": nSaved}, "update": upd,
+		"notifications": a.m.notes.Summary(), "icons": a.customIcons()})
 }
 
 type ChannelInput struct {
@@ -493,16 +495,17 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		TwitchToken     *string `json:"twitch_token"` // nil = keep, "" = clear
-		Proxy           *string `json:"proxy"`
-		DefaultQuality  *string `json:"default_quality"`
-		DefaultInterval *int    `json:"default_interval"`
-		DefaultTemplate *string `json:"default_template"`
-		RemuxAfter      *bool   `json:"remux_after"`
-		StreamlinkBin   *string `json:"streamlink_bin"`
-		FFmpegBin       *string `json:"ffmpeg_bin"`
-		UpdateChannel   *string `json:"update_channel"`
-		UpdateAuto      *bool   `json:"update_auto"`
+		TwitchToken     *string   `json:"twitch_token"` // nil = keep, "" = clear
+		Proxy           *string   `json:"proxy"`
+		DefaultQuality  *string   `json:"default_quality"`
+		DefaultInterval *int      `json:"default_interval"`
+		DefaultTemplate *string   `json:"default_template"`
+		RemuxAfter      *bool     `json:"remux_after"`
+		StreamlinkBin   *string   `json:"streamlink_bin"`
+		FFmpegBin       *string   `json:"ffmpeg_bin"`
+		UpdateChannel   *string   `json:"update_channel"`
+		UpdateAuto      *bool     `json:"update_auto"`
+		NotifyOff       *[]string `json:"notify_off"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -547,6 +550,17 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 			s.UpdateChannel = c
 			a.upd.Invalidate()
 		}
+	}
+	if in.NotifyOff != nil {
+		off := []string{}
+		for _, t := range *in.NotifyOff {
+			if !validNotifyType(t) {
+				writeErr(w, errBad("unknown notification type: "+t))
+				return
+			}
+			off = append(off, t)
+		}
+		s.NotifyOff = off
 	}
 	if in.UpdateAuto != nil {
 		s.UpdateCheckOff = !*in.UpdateAuto
@@ -788,6 +802,10 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/state", a.state)
 	mux.HandleFunc("GET /api/version", a.version)
 	mux.HandleFunc("GET /api/stats", a.stats)
+	mux.HandleFunc("GET /api/notifications", a.listNotifications)
+	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
+	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
+	mux.HandleFunc("GET /icons/{file}", a.serveIcon)
 	mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.upd.Status()) })
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
 		a.upd.Check(r.Context(), true)

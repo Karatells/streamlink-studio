@@ -53,6 +53,8 @@ type Runtime struct {
 	StreamsAt time.Time
 	checking  bool
 	suppress  bool // manually stopped: do not auto-restart until the stream goes offline
+	seen      bool // at least one check finished (no "live" notification for streams that were already running at startup)
+	wasLive   bool
 	rec       *Rec
 }
 
@@ -68,20 +70,23 @@ type CheckResult struct {
 }
 
 type Manager struct {
-	cfg  Config
-	st   *Store
-	mu   sync.Mutex
-	rt   map[string]*Runtime
-	jobs []*Job
-	meta *metaStore
-	wg   sync.WaitGroup
-	ctx  context.Context
+	cfg   Config
+	st    *Store
+	mu    sync.Mutex
+	rt    map[string]*Runtime
+	jobs  []*Job
+	meta  *metaStore
+	notes *Notifier
+	wg    sync.WaitGroup
+	ctx   context.Context
 }
 
 func NewManager(cfg Config, st *Store) *Manager {
 	ms := openMeta(filepath.Join(cfg.DataDir, "recordings.json"))
 	ms.pruneMissing(cfg.RecDir)
-	return &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
+	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
+	m.notes = OpenNotifier(filepath.Join(cfg.DataDir, "notifications.json"), func() []string { return st.Settings().NotifyOff })
+	return m
 }
 
 func (m *Manager) streamlinkBin() string {
@@ -196,13 +201,32 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 		m.mu.Unlock()
 		return
 	}
+	var after func() // notifications are sent after the lock is released
+	platform := ch.Plugin
+	if platform == "" {
+		platform = detectPlatform(ch.URL)
+	}
+	evt := func(typ string, extra map[string]string, dedupe string) func() {
+		p := map[string]string{"channel": streamerName(ch), "channel_id": ch.ID}
+		for k, v := range extra {
+			p[k] = v
+		}
+		return func() { m.notes.Notify(typ, platform, p, dedupe) }
+	}
 	switch {
 	case res.Live:
 		rt.Title = res.Title
 		rt.Streams, rt.StreamsAt = res.Streams, time.Now()
 		rt.Status = StatusLive
 		start := ch.AutoRecord && !rt.suppress
+		if rt.seen && !rt.wasLive {
+			after = evt("stream_live", map[string]string{"title": res.Title, "recording": boolStr(start)}, "")
+		}
+		rt.seen, rt.wasLive = true, true
 		m.mu.Unlock()
+		if after != nil {
+			after()
+		}
 		if start {
 			if err := m.StartRecording(ch.ID); err != nil {
 				log.Printf("[%s] auto-record: %v", streamerName(ch), err)
@@ -210,6 +234,9 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 		}
 		return
 	case res.AuthError:
+		if rt.Status != StatusAuthError {
+			after = evt("auth_error", map[string]string{"error": res.Error}, ch.ID)
+		}
 		rt.Status = StatusAuthError
 		rt.Error = res.Error
 	case res.Error != "":
@@ -219,8 +246,22 @@ func (m *Manager) applyCheck(ch Channel, res CheckResult) {
 		rt.Status = StatusOffline
 		rt.Title = ""
 		rt.suppress = false
+		if rt.seen && rt.wasLive {
+			after = evt("stream_ended", nil, "")
+		}
+		rt.seen, rt.wasLive = true, false
 	}
 	m.mu.Unlock()
+	if after != nil {
+		after()
+	}
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return ""
 }
 
 // ForceCheck makes the poller re-check the channel on its next tick.
@@ -453,6 +494,7 @@ func (m *Manager) StartRecording(id string) error {
 		return &httpError{409, "already recording"}
 	}
 	rt.suppress = false
+	rt.seen, rt.wasLive = true, true
 	title := rt.Title
 	streams, streamsAt := rt.Streams, rt.StreamsAt
 	m.mu.Unlock()
@@ -546,6 +588,7 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 		size = fi.Size()
 	}
 	log.Printf("[%s] recording finished (%d bytes, err=%v)", streamerName(ch), size, werr)
+	failMsg := ""
 
 	m.mu.Lock()
 	rt := m.rtLocked(ch.ID)
@@ -565,12 +608,20 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 		if looksLikeAuthError(msg) {
 			rt.Status = StatusAuthError
 		}
+		failMsg = msg
 		rt.LastCheck = time.Now() // do not hammer a failing channel
 	default:
 		rt.Status = StatusOffline
 	}
 	m.mu.Unlock()
 
+	if failMsg != "" {
+		platform := ch.Plugin
+		if platform == "" {
+			platform = detectPlatform(ch.URL)
+		}
+		m.notes.Notify("rec_failed", platform, map[string]string{"channel": streamerName(ch), "channel_id": ch.ID, "error": failMsg}, ch.ID+"|"+failMsg)
+	}
 	if size == 0 {
 		_ = os.Remove(tmpPath)
 		m.meta.remove(rec.TmpName, rec.Final)

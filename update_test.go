@@ -149,6 +149,10 @@ func TestCheckChannels(t *testing.T) {
 	if c := u.Check(ctx, true); c.Error != "" || !c.Available || c.Latest.Tag != "v0.2.0" {
 		t.Fatalf("stable: %+v", c)
 	}
+	u.Check(ctx, true) // the same version must not be announced twice
+	if items, _ := u.m.notes.List(); len(items) != 1 || items[0].Type != "update_available" || items[0].Params["version"] != "v0.2.0" {
+		t.Fatalf("update notification: %+v", items)
+	}
 	s := u.m.st.Settings()
 	s.UpdateChannel = "beta"
 	u.m.st.SetSettings(s)
