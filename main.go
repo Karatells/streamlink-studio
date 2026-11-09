@@ -100,6 +100,9 @@ func main() {
 	defer stop()
 	go m.Run(ctx)
 	go upd.Run(ctx)
+	api.tg = NewTelegram(api)
+	m.extraSink = api.tg.Enqueue
+	go api.tg.Run(ctx)
 	go m.RunAutoCompress(ctx)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}

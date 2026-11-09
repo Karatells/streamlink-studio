@@ -71,21 +71,22 @@ type CheckResult struct {
 }
 
 type Manager struct {
-	cfg      Config
-	st       *Store
-	mu       sync.Mutex
-	rt       map[string]*Runtime
-	jobs     []*Job
-	meta     *metaStore
-	notes    *Notifier
-	gotify   *Gotify
-	enc      chan struct{} // one compression at a time
-	elog     *EventLog
-	cnt      *Counters
-	lib      libCache
-	lastTick atomic.Int64 // unix nanos of the last poller tick (health)
-	wg       sync.WaitGroup
-	ctx      context.Context
+	cfg       Config
+	st        *Store
+	mu        sync.Mutex
+	rt        map[string]*Runtime
+	jobs      []*Job
+	meta      *metaStore
+	notes     *Notifier
+	gotify    *Gotify
+	enc       chan struct{} // one compression at a time
+	elog      *EventLog
+	cnt       *Counters
+	extraSink func(Notification) // Telegram; set once before Run
+	lib       libCache
+	lastTick  atomic.Int64 // unix nanos of the last poller tick (health)
+	wg        sync.WaitGroup
+	ctx       context.Context
 }
 
 func NewManager(cfg Config, st *Store) *Manager {
@@ -100,6 +101,9 @@ func NewManager(cfg Config, st *Store) *Manager {
 	m.notes.sink = func(n Notification) {
 		m.cnt.Inc("streamlink_studio_notifications_total", "type", n.Type)
 		m.gotify.Enqueue(n)
+		if f := m.extraSink; f != nil {
+			f(n)
+		}
 	}
 	return m
 }

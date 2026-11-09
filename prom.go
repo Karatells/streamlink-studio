@@ -82,3 +82,17 @@ func (p *promWriter) counters(c *Counters, help map[string]string) {
 		p.sample(name, "counter", help[name], labels, snap[k])
 	}
 }
+
+// Sum adds up every series of a counter whose label string contains sub ("" = all).
+func (c *Counters) Sum(name, sub string) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var t float64
+	for k, v := range c.m {
+		n, labels, _ := strings.Cut(k, "\x00")
+		if n == name && strings.Contains(labels, sub) {
+			t += v
+		}
+	}
+	return t
+}

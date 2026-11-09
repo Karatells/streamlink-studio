@@ -762,7 +762,7 @@ function trimModal(rec) {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'notifications', 'tools', 'stats', 'system', 'log', 'updates'];
+const SET_TABS = ['general', 'auth', 'notifications', 'telegram', 'tools', 'stats', 'system', 'log', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -774,12 +774,14 @@ function settingsView(tab) {
     <div class="tabs" role="tablist">${SET_TABS.map((k) => `<a role="tab" href="#/settings/${k}" class="tab${k === tab ? ' active' : ''}" aria-selected="${k === tab}">${esc(settingsTabLabel(k))}${k === 'updates' && state.update?.available ? '<i class="dot"></i>' : ''}</a>`).join('')}</div>
     <div id="stab" class="stab"><div class="loading muted">${esc(t('loading'))}</div></div></div>`;
   const body = $('#stab');
+  $('.tabs .tab.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   (async () => {
     settings = await api('GET', '/settings');
     if (alive.stop) return;
     if (tab === 'updates') return updatesTab(body, alive);
     if (tab === 'stats') return statsTab(body, alive);
     if (tab === 'notifications') return notificationsTab(body, alive);
+    if (tab === 'telegram') return telegramTab(body, alive);
     if (tab === 'system') return systemTab(body, alive);
     if (tab === 'log') return logTab(body, alive);
     const ver = await api('GET', '/version');
@@ -915,6 +917,82 @@ function notificationsTab(body, alive) {
     const b = collect();
     await api('POST', '/gotify/test', { url: b.gotify_url, token: b.gotify_token, lang: b.gotify_lang });
     toast(t('gotify_test_ok')); status();
+  });
+}
+
+/* Settings → Telegram: bot token, allow-list, control switch, notification types */
+function telegramTab(body, alive) {
+  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available'];
+  const sel = new Set(settings.telegram_types || types);
+  const gl = settings.telegram_lang || lang;
+  const fmt = (d) => new Date(d).toLocaleString();
+  body.innerHTML = `<fieldset class="card"><legend>Telegram</legend>
+    <div class="muted small" style="margin-bottom:8px">${esc(t('tgs_hint'))}</div>
+    <label class="check"><input type="checkbox" id="tg-on" ${settings.telegram_on ? 'checked' : ''}> ${esc(t('tgs_enable'))}</label>
+    <div class="field" style="margin-top:10px"><label>${esc(t('tgs_token'))}</label>
+      <div class="row"><input type="password" id="tg-token" class="grow" autocomplete="off" placeholder="${settings.has_telegram_token ? esc(t('token_keep')) : '123456:ABC-DEF…'}">
+      ${settings.has_telegram_token ? `<button class="btn sm danger" id="tg-token-clear">${esc(t('remove_cookies'))}</button>` : ''}</div>
+      <span class="muted small">${esc(t('tgs_token_hint'))}</span></div>
+    <div class="field"><label>${esc(t('tgs_users'))}</label>
+      <textarea id="tg-users" rows="3" inputmode="numeric" placeholder="123456789">${esc((settings.telegram_users || []).join('\n'))}</textarea>
+      <span class="muted small">${esc(t('tgs_users_hint'))}</span>
+      <div id="tg-nousers" class="errtxt small" ${(settings.telegram_users || []).length ? 'hidden' : ''}>${esc(t('tgs_no_users'))}</div></div>
+    <label class="check"><input type="checkbox" id="tg-control" ${settings.telegram_control ? 'checked' : ''}> <span>${esc(t('tgs_control'))}<br><span class="muted small">${esc(t('tgs_control_hint'))}</span></span></label>
+    <div class="field" style="margin-top:10px"><label>${esc(t('tgs_lang'))}</label>
+      <select id="tg-lang">${languages.map((l) => `<option value="${l.code}" ${l.code === gl ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>${esc(t('tgs_types'))}</label>
+      <div class="row" style="gap:8px;margin-bottom:4px"><button class="btn sm" id="tg-all" type="button">${esc(t('gotify_all'))}</button><button class="btn sm" id="tg-none" type="button">${esc(t('gotify_none'))}</button></div>
+      <div id="tg-types">${types.map((k) => `<label class="check"><input type="checkbox" data-type="${k}" ${sel.has(k) ? 'checked' : ''}> ${notifIcon({ type: k })} ${esc(t('ntf_type_' + k))}</label>`).join('')}</div>
+      <span class="muted small">${esc(t('tgs_types_hint'))}</span></div>
+    <div id="tg-status" class="muted small"></div>
+  </fieldset>
+  <div class="row"><button class="btn primary" id="tg-save">${esc(t('save'))}</button><button class="btn" id="tg-test">${esc(t('tgs_test'))}</button></div>`;
+
+  const val = (id) => $(id).value.trim();
+  const parseUsers = () => {
+    const parts = val('#tg-users').split(/[\s,;]+/).filter(Boolean);
+    if (parts.some((p) => !/^\d{1,15}$/.test(p) || Number(p) <= 0)) throw new Error(t('tgs_users') + ': ' + parts.find((p) => !/^\d{1,15}$/.test(p) || Number(p) <= 0));
+    return [...new Set(parts.map(Number))];
+  };
+  const collect = () => {
+    const b = { telegram_on: $('#tg-on').checked, telegram_users: parseUsers(), telegram_control: $('#tg-control').checked,
+      telegram_lang: $('#tg-lang').value, telegram_types: $$('#tg-types [data-type]').filter((c) => c.checked).map((c) => c.dataset.type) };
+    if (val('#tg-token')) b.telegram_token = val('#tg-token');
+    return b;
+  };
+  const status = async () => {
+    try {
+      const s = await api('GET', '/telegram');
+      if (alive.stop) return;
+      const parts = [];
+      if (s.username) parts.push(`${t('tgs_bot')}: <a href="https://t.me/${esc(s.username)}" target="_blank" rel="noopener">@${esc(s.username)}</a>`);
+      if (s.last_error) parts.push(`⚠ ${esc(t('tgs_last_error'))} (${esc(fmt(s.last_error_at))}): ${esc(s.last_error)}`);
+      else if (s.last_ok) parts.push(`✓ ${esc(t('tgs_last_ok'))}: ${esc(fmt(s.last_ok))}`);
+      if (s.sent) parts.push(esc(t('tgs_sent', { n: s.sent })));
+      $('#tg-status').innerHTML = parts.join('<br>');
+    } catch { /* ignore */ }
+  };
+  status();
+  clearTimeout(alive.tgTimer);
+  alive.tgTimer = setInterval(status, 10000);
+  alive.timers.push(alive.tgTimer);
+  $('#tg-users').oninput = () => { $('#tg-nousers').hidden = val('#tg-users') !== ''; };
+  $('#tg-all').onclick = () => $$('#tg-types [data-type]').forEach((c) => { c.checked = true; });
+  $('#tg-none').onclick = () => $$('#tg-types [data-type]').forEach((c) => { c.checked = false; });
+  $('#tg-save').onclick = guard(async () => {
+    settings = await api('PUT', '/settings', collect());
+    toast(t('saved')); telegramTab(body, alive);
+  });
+  const clr = $('#tg-token-clear');
+  if (clr) clr.onclick = guard(async () => {
+    settings = await api('PUT', '/settings', { telegram_on: false, telegram_token: '' });
+    toast(t('saved')); telegramTab(body, alive);
+  });
+  $('#tg-test').onclick = guard(async () => {
+    const r = await api('POST', '/telegram/test', { token: val('#tg-token') || undefined, lang: $('#tg-lang').value });
+    let m = t('tgs_test_ok', { bot: r.username, n: r.sent_to.length });
+    if (r.failed_to.length) m += t('tgs_test_fail', { ids: r.failed_to.join(', ') });
+    toast(m, r.failed_to.length > 0); status();
   });
 }
 

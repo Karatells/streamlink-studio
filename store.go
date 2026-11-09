@@ -54,6 +54,13 @@ type Settings struct {
 	GotifyToken     string   `json:"gotify_token"`
 	GotifyTypes     []string `json:"gotify_types"` // nil = all types
 	GotifyLang      string   `json:"gotify_lang"`
+	// Telegram bot: notifications and remote control for the listed users only.
+	TelegramOn      bool     `json:"telegram_on"`
+	TelegramToken   string   `json:"telegram_token"`
+	TelegramUsers   []int64  `json:"telegram_users"`   // allowed Telegram user IDs
+	TelegramControl bool     `json:"telegram_control"` // false = read-only bot
+	TelegramTypes   []string `json:"telegram_types"`   // nil = all notification types
+	TelegramLang    string   `json:"telegram_lang"`
 	// Compression defaults (manual dialog) and the automatic rule.
 	CompressCodec    string `json:"compress_codec"`     // h264 | h265
 	CompressLevel    string `json:"compress_level"`     // light | balanced | strong

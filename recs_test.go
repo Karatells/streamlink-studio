@@ -22,7 +22,10 @@ func testAPI(t *testing.T) (*API, string) {
 	rec := filepath.Join(dir, "rec")
 	os.MkdirAll(rec, 0o755)
 	m := NewManager(Config{DataDir: dir, RecDir: rec}, st)
-	return &API{m: m, auth: NewAuth("", "", dir), upd: NewUpdater(m)}, rec
+	a := &API{m: m, auth: NewAuth("", "", dir), upd: NewUpdater(m)}
+	a.tg = NewTelegram(a)
+	m.extraSink = a.tg.Enqueue
+	return a, rec
 }
 
 func call(t *testing.T, a *API, method, path string, body any) (int, []byte) {

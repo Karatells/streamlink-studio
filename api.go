@@ -20,6 +20,7 @@ type API struct {
 	upd  *Updater
 	m    *Manager
 	auth *Auth
+	tg   *Telegram
 }
 
 // ------------------------------------------------------------- helpers
@@ -129,6 +130,13 @@ type SettingsView struct {
 	GotifyTypes     []string `json:"gotify_types"`
 	GotifyLang      string   `json:"gotify_lang"`
 
+	TelegramOn       bool     `json:"telegram_on"`
+	HasTelegramToken bool     `json:"has_telegram_token"`
+	TelegramUsers    []int64  `json:"telegram_users"`
+	TelegramControl  bool     `json:"telegram_control"`
+	TelegramTypes    []string `json:"telegram_types"`
+	TelegramLang     string   `json:"telegram_lang"`
+
 	CompressCodec    string `json:"compress_codec"`
 	CompressLevel    string `json:"compress_level"`
 	CompressHeight   int    `json:"compress_height"`
@@ -140,7 +148,12 @@ func settingsView(s Settings) SettingsView {
 	if s.GotifyTypes == nil {
 		gt = append([]string{}, notifyTypes...)
 	}
-	return SettingsView{HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
+	tt := append([]string{}, s.TelegramTypes...)
+	if s.TelegramTypes == nil {
+		tt = append([]string{}, notifyTypes...)
+	}
+	return SettingsView{TelegramOn: s.TelegramOn, HasTelegramToken: s.TelegramToken != "", TelegramUsers: append([]int64{}, s.TelegramUsers...),
+		TelegramControl: s.TelegramControl, TelegramTypes: tt, TelegramLang: s.TelegramLang, HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
 		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
 		RemuxAfter: s.RemuxAfter, StreamlinkBin: s.StreamlinkBin, FFmpegBin: s.FFmpegBin, UpdateChannel: s.UpdateChannel,
 		UpdateAuto: !s.UpdateCheckOff, NotifyOff: append([]string{}, s.NotifyOff...),
@@ -531,6 +544,13 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		GotifyTypes     *[]string `json:"gotify_types"`
 		GotifyLang      *string   `json:"gotify_lang"`
 
+		TelegramOn      *bool     `json:"telegram_on"`
+		TelegramToken   *string   `json:"telegram_token"` // nil = keep, "" = clear
+		TelegramUsers   *[]int64  `json:"telegram_users"`
+		TelegramControl *bool     `json:"telegram_control"`
+		TelegramTypes   *[]string `json:"telegram_types"`
+		TelegramLang    *string   `json:"telegram_lang"`
+
 		CompressCodec    *string `json:"compress_codec"`
 		CompressLevel    *string `json:"compress_level"`
 		CompressHeight   *int    `json:"compress_height"`
@@ -608,7 +628,7 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.GotifyLang != nil {
 		l := strings.TrimSpace(*in.GotifyLang)
-		if l != "" && len(a.m.gotify.locale(l)) == 0 {
+		if l != "" && !locs.Has(l) {
 			writeErr(w, errBad("unknown language: "+l))
 			return
 		}
@@ -630,6 +650,62 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.GotifyOn && (s.GotifyURL == "" || s.GotifyToken == "") {
 		writeErr(w, errBad("Gotify needs a server URL and an application token"))
+		return
+	}
+	if in.TelegramToken != nil {
+		tok := strings.TrimSpace(*in.TelegramToken)
+		if tok != "" && !tgTokenRe.MatchString(tok) {
+			writeErr(w, errBad("that does not look like a Telegram bot token (123456:ABC...)"))
+			return
+		}
+		s.TelegramToken = tok
+	}
+	if in.TelegramUsers != nil {
+		seen := map[int64]bool{}
+		users := []int64{}
+		for _, id := range *in.TelegramUsers {
+			if id <= 0 {
+				writeErr(w, errBad("Telegram user IDs are positive numbers"))
+				return
+			}
+			if !seen[id] {
+				seen[id] = true
+				users = append(users, id)
+			}
+		}
+		if len(users) > 50 {
+			writeErr(w, errBad("at most 50 Telegram users"))
+			return
+		}
+		s.TelegramUsers = users
+	}
+	if in.TelegramTypes != nil {
+		tt := []string{}
+		for _, ty := range *in.TelegramTypes {
+			if !validNotifyType(ty) {
+				writeErr(w, errBad("unknown notification type: "+ty))
+				return
+			}
+			tt = append(tt, ty)
+		}
+		s.TelegramTypes = tt
+	}
+	if in.TelegramLang != nil {
+		l := strings.TrimSpace(*in.TelegramLang)
+		if l != "" && !locs.Has(l) {
+			writeErr(w, errBad("unknown language: "+l))
+			return
+		}
+		s.TelegramLang = l
+	}
+	if in.TelegramControl != nil {
+		s.TelegramControl = *in.TelegramControl
+	}
+	if in.TelegramOn != nil {
+		s.TelegramOn = *in.TelegramOn
+	}
+	if s.TelegramOn && s.TelegramToken == "" {
+		writeErr(w, errBad("the Telegram bot needs a token"))
 		return
 	}
 	if in.CompressCodec != nil {
@@ -921,6 +997,8 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/notifications", a.listNotifications)
 	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
 	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
+	mux.HandleFunc("GET /api/telegram", a.telegramStatus)
+	mux.HandleFunc("POST /api/telegram/test", a.telegramTest)
 	mux.HandleFunc("GET /api/gotify", a.gotifyStatus)
 	mux.HandleFunc("POST /api/gotify/test", a.gotifyTest)
 	mux.HandleFunc("GET /icons/{file}", a.serveIcon)

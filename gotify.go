@@ -30,12 +30,11 @@ type Gotify struct {
 	sent    uint64
 	failed  uint64
 	lastAt  time.Time
-	locales map[string]map[string]string
 }
 
 func NewGotify(settings func() Settings) *Gotify {
 	g := &Gotify{settings: settings, client: &http.Client{Timeout: 10 * time.Second},
-		q: make(chan Notification, gotifyQueue), retryGap: 2 * time.Second, locales: map[string]map[string]string{}}
+		q: make(chan Notification, gotifyQueue), retryGap: 2 * time.Second}
 	go g.worker()
 	return g
 }
@@ -149,77 +148,13 @@ func redactToken(msg, token string) error {
 
 // ------------------------------------------------------------ text
 
-func (g *Gotify) locale(lang string) map[string]string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if m, ok := g.locales[lang]; ok {
-		return m
-	}
-	m := map[string]string{}
-	if lang != "" && validLangCode(lang) {
-		if b, err := webFS.ReadFile("web/locales/" + lang + ".json"); err == nil {
-			_ = json.Unmarshal(b, &m)
-		}
-	}
-	g.locales[lang] = m
-	return m
-}
-
-func validLangCode(l string) bool {
-	if l == "" || len(l) > 10 {
-		return false
-	}
-	for _, c := range l {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '-') {
-			return false
-		}
-	}
-	return true
-}
-
-func (g *Gotify) tr(lang, key string) string {
-	if v := g.locale(lang)[key]; v != "" {
-		return v
-	}
-	if v := g.locale("en")[key]; v != "" {
-		return v
-	}
-	return key
-}
-
-func (g *Gotify) fill(lang, key string, vars map[string]string) string {
-	s := g.tr(lang, key)
-	for k, v := range vars {
-		s = strings.ReplaceAll(s, "{"+k+"}", v)
-	}
-	return s
-}
-
-// render mirrors notifText()/ntf_type_* in the web UI.
 func (g *Gotify) render(lang string, n Notification) (title, msg string) {
-	p := n.Params
-	vars := map[string]string{"channel": p["channel"], "title": p["title"], "error": p["error"],
-		"input": p["input"], "output": p["output"], "version": p["version"]}
-	if p["kind"] != "" {
-		vars["kind"] = g.tr(lang, "job_"+p["kind"])
-	}
-	if p["channel"] != "" && n.Type == "update_available" {
-		vars["channel_type"] = g.tr(lang, "upd_ch_"+p["channel"])
-		vars["channel"] = ""
-	}
-	msg = g.fill(lang, "ntf_"+n.Type, vars)
-	if n.Type == "stream_live" && p["recording"] != "" {
-		msg += " · " + g.tr(lang, "ntf_recording_started")
-	}
-	if n.Platform != "" {
-		msg += " [" + n.Platform + "]"
-	}
-	return g.tr(lang, "ntf_type_"+n.Type), msg
+	return locs.Notification(lang, n)
 }
 
 // Test sends a message synchronously with the given (possibly unsaved) settings.
 func (g *Gotify) Test(s Settings) error {
-	err := g.post(s, "Streamlink Studio", g.tr(s.GotifyLang, "gotify_test_msg"), 4)
+	err := g.post(s, "Streamlink Studio", locs.Tr(s.GotifyLang, "gotify_test_msg"), 4)
 	g.record(err)
 	return err
 }

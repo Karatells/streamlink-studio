@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -138,10 +139,9 @@ func TestGotifyTestEndpointAndRetry(t *testing.T) {
 	}
 
 	// transient 5xx is retried once, a 4xx is not
-	var hits int
+	var hits atomic.Int32
 	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		if hits == 1 {
+		if hits.Add(1) == 1 {
 			http.Error(w, "x", 503)
 		}
 	}))
@@ -149,10 +149,10 @@ func TestGotifyTestEndpointAndRetry(t *testing.T) {
 	g := NewGotify(func() Settings { return Settings{GotifyOn: true, GotifyURL: flaky.URL, GotifyToken: "k"} })
 	g.retryGap = 10 * time.Millisecond
 	g.Enqueue(Notification{Type: "job_done", Level: "success", Params: map[string]string{"kind": "merge", "output": "a.mp4"}})
-	for i := 0; i < 100 && hits < 2; i++ {
+	for i := 0; i < 100 && hits.Load() < 2; i++ {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if hits != 2 {
-		t.Fatalf("expected one retry, hits=%d", hits)
+	if hits.Load() != 2 {
+		t.Fatalf("expected one retry, hits=%d", hits.Load())
 	}
 }
