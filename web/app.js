@@ -104,10 +104,17 @@ let recs = [];
 let current = null; // current view object
 
 function renderShell() {
-  const names = { channels: t('nav_channels') + ` (${state.counts.channels})`, recordings: t('nav_recordings') + ` (${state.counts.recordings})`, saved: t('nav_saved') + ` (${state.counts.saved || 0})`, settings: t('nav_settings') };
+  const names = {
+    channels: [t('nav_channels'), state.counts.channels],
+    recordings: [t('nav_recordings'), state.counts.recordings],
+    saved: [t('nav_saved'), state.counts.saved || 0],
+    settings: [t('nav_settings'), null],
+  };
   const upd = state.update?.available;
   $$('#nav a').forEach((a) => {
-    a.textContent = names[a.dataset.route];
+    const [label, count] = names[a.dataset.route];
+    // label and count are separate spans: on narrow screens the count always drops to its own line
+    a.innerHTML = `<span class="nl">${esc(label)}</span>${count === null ? '' : ` <span class="nc">(${count})</span>`}`;
     if (a.dataset.route === 'settings' && upd) a.insertAdjacentHTML('beforeend', '<i class="dot"></i>');
   });
   const bn = $('#update-banner');

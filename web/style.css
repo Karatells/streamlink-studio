@@ -359,3 +359,21 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .meter { height: 7px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .meter i { display: block; height: 100%; background: var(--accent); }
 .mdel { align-items: flex-start; }
+
+/* ---- top bar: never break a label in the middle, wrap whole blocks instead ---- */
+nav a { white-space: nowrap; }
+.topbar .brand { white-space: nowrap; }
+@media (min-width: 721px) and (max-width: 1100px) {
+  .topbar { flex-wrap: wrap; height: auto; min-height: 54px; row-gap: 6px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; gap: 6px 12px; }
+  nav a { padding: 7px 10px; }
+}
+@media (max-width: 720px) {
+  nav a { white-space: normal; flex-direction: column; gap: 0; }
+  nav a .nc { font-size: 12px; opacity: .85; }
+}
+@media (max-width: 440px) {
+  /* 2x2 grid: long translations ("Сохранённые (0)") fit without breaking words */
+  nav { display: grid; grid-template-columns: 1fr 1fr; }
+  nav a { flex-direction: row; gap: 5px; white-space: nowrap; font-size: 14px; padding: 9px 6px; }
+  nav a .nc { font-size: inherit; opacity: 1; }
+}
