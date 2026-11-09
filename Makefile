@@ -26,3 +26,8 @@ release: clean
 
 clean:
 	rm -rf $(DIST) $(APP)
+
+# catches undefined identifiers in the UI scripts (needs eslint; not part of the build)
+check-js:
+	@printf '%s\n' "export default [{files:['**/*.js'],languageOptions:{ecmaVersion:2023,sourceType:'module',globals:Object.fromEntries('window document location localStorage navigator fetch setTimeout clearTimeout setInterval clearInterval console matchMedia confirm getSelection URL FormData Event Promise Intl Blob history URLSearchParams'.split(' ').map(k=>[k,'readonly']))},rules:{'no-undef':'error'}}];" > /tmp/studio-eslint.config.mjs
+	eslint -c /tmp/studio-eslint.config.mjs web/app.js web/login.js web/languages.config.js

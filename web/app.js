@@ -330,6 +330,8 @@ function channelModal(ch) {
 }
 
 /* ---------------------------------------------------- recordings view */
+const NATIVE = ['mp4', 'm4v', 'webm', 'mov']; // containers browsers can play natively
+
 const filters = {
   all: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
   saved: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
@@ -813,7 +815,7 @@ function statsTab(body, alive) {
 
 /* ------------------------------------------------------- updates tab */
 function updatesTab(body, alive) {
-  let st = null, busy = false, pollTimer = null;
+  let st = null, pollTimer = null;
   const later = (fn, ms) => { const id = setTimeout(fn, ms); alive.timers.push(id); return id; };
   const fmtDate = (d) => (d ? new Date(d).toLocaleString() : t('never'));
   const chLabel = (c) => t('upd_ch_' + c);
