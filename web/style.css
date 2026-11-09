@@ -377,3 +377,21 @@ nav a { white-space: nowrap; }
   nav a { flex-direction: row; gap: 5px; white-space: nowrap; font-size: 14px; padding: 9px 6px; }
   nav a .nc { font-size: inherit; opacity: 1; }
 }
+
+/* ---- bulk bar: same layout in every language, no orphan button ---- */
+.bulkbar .btn { white-space: nowrap; }
+@media (min-width: 721px) and (max-width: 900px) {
+  /* info on its own line, the five buttons share the next one */
+  .bulkbar { flex-wrap: wrap; }
+  .bulk-info { flex: 1 1 100%; }
+  .bulkbar .grow { display: none; }
+  .bulkbar .btn { flex: 1 1 auto; }
+}
+@media (max-width: 720px) {
+  /* phones: two columns, the last button spans the full width */
+  .bulkbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .bulk-info { grid-column: 1 / -1; }
+  .bulkbar .grow { display: none; }
+  .bulkbar .btn { width: 100%; text-align: center; }
+  .bulkbar .btn[data-b=clear] { grid-column: 1 / -1; }
+}
