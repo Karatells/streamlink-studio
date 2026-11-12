@@ -1105,7 +1105,7 @@ function filesView() {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'notifications', 'telegram', 'tools', 'stats', 'system', 'log', 'updates'];
+const SET_TABS = ['general', 'auth', 'notifications', 'telegram', 'ftp', 'tools', 'stats', 'system', 'log', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -1125,6 +1125,7 @@ function settingsView(tab) {
     if (tab === 'stats') return statsTab(body, alive);
     if (tab === 'notifications') return notificationsTab(body, alive);
     if (tab === 'telegram') return telegramTab(body, alive);
+    if (tab === 'ftp') return ftpTab(body, alive);
     if (tab === 'system') return systemTab(body, alive);
     if (tab === 'log') return logTab(body, alive);
     const ver = await api('GET', '/version');
@@ -1264,6 +1265,55 @@ function notificationsTab(body, alive) {
 }
 
 /* Settings → Telegram: bot token, allow-list, control switch, notification types */
+function ftpTab(body, alive) {
+  const host = location.hostname || 'server';
+  body.innerHTML = `<fieldset class="card"><legend>FTP</legend>
+    <div class="muted small" style="margin-bottom:8px">${esc(t('ftp_hint'))}</div>
+    <label class="check"><input type="checkbox" id="ftp-on" ${settings.ftp_on ? 'checked' : ''}> ${esc(t('ftp_enable'))}</label>
+    <div class="two" style="margin-top:10px">
+      <div class="field"><label>${esc(t('ftp_user'))}</label><input type="text" id="ftp-user" autocomplete="off" value="${esc(settings.ftp_user || '')}"></div>
+      <div class="field"><label>${esc(t('ftp_pass'))}</label>
+        <input type="password" id="ftp-pass" autocomplete="new-password" placeholder="${settings.has_ftp_pass ? esc(t('token_keep')) : ''}"></div>
+    </div>
+    <div class="two">
+      <div class="field"><label>${esc(t('ftp_port'))}</label><input type="number" id="ftp-port" min="1" max="65535" value="${settings.ftp_port || 2121}"></div>
+      <div class="field"><label>${esc(t('ftp_passive'))}</label><input type="text" id="ftp-passive" placeholder="50000-50100" value="${esc(settings.ftp_passive || '')}"></div>
+    </div>
+    <div class="field"><label>${esc(t('ftp_public_ip'))}</label><input type="text" id="ftp-ip" placeholder="203.0.113.5" value="${esc(settings.ftp_public_ip || '')}">
+      <span class="muted small">${esc(t('ftp_ports_hint'))}</span></div>
+    <label class="check"><input type="checkbox" id="ftp-ro" ${settings.ftp_readonly ? 'checked' : ''}> <span>${esc(t('ftp_readonly'))}<br><span class="muted small">${esc(t('ftp_readonly_hint'))}</span></span></label>
+    <label class="check"><input type="checkbox" id="ftp-tls" ${settings.ftp_require_tls ? 'checked' : ''}> <span>${esc(t('ftp_require_tls'))}<br><span class="muted small">${esc(t('ftp_require_tls_hint'))}</span></span></label>
+    <div id="ftp-status" class="muted small"></div>
+  </fieldset>
+  <div class="row"><button class="btn primary" id="ftp-save">${esc(t('save'))}</button></div>`;
+  const status = async () => {
+    try {
+      const s = await api('GET', '/ftp');
+      if (alive.stop) return;
+      const parts = [];
+      if (s.error) parts.push(`⚠ ${esc(s.error)}`);
+      else if (s.running) {
+        parts.push(`✓ ${esc(t('ftp_running', { n: s.sessions }))}`);
+        parts.push(`<code>ftp://${esc(settings.ftp_user || 'user')}@${esc(host)}:${s.port}/</code>`);
+        if (s.fingerprint) parts.push(`${esc(t('ftp_fp'))}: <code style="word-break:break-all">${esc(s.fingerprint)}</code>`);
+      } else parts.push(esc(t('ftp_stopped')));
+      $('#ftp-status').innerHTML = parts.join('<br>');
+    } catch { /* ignore */ }
+  };
+  status();
+  const timer = setInterval(status, 4000);
+  alive.timers.push(timer);
+  $('#ftp-save').onclick = guard(async () => {
+    const b = { ftp_on: $('#ftp-on').checked, ftp_user: $('#ftp-user').value.trim(), ftp_port: parseInt($('#ftp-port').value, 10) || 2121,
+      ftp_passive: $('#ftp-passive').value.trim(), ftp_public_ip: $('#ftp-ip').value.trim(),
+      ftp_readonly: $('#ftp-ro').checked, ftp_require_tls: $('#ftp-tls').checked };
+    if ($('#ftp-pass').value) b.ftp_pass = $('#ftp-pass').value;
+    settings = await api('PUT', '/settings', b);
+    toast(t('saved')); ftpTab(body, alive);
+    setTimeout(status, 2500);
+  });
+}
+
 function telegramTab(body, alive) {
   const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available'];
   const sel = new Set(settings.telegram_types || types);

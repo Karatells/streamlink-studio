@@ -711,3 +711,45 @@ func (m *Manager) MigrateSaved(listPath string) {
 	}
 	_ = os.Rename(listPath, listPath+".migrated")
 }
+
+// MoveRenameSaved moves / renames srcRel to dstRel (a full new path; the target must not exist).
+func (m *Manager) MoveRenameSaved(srcRel, dstRel string) error {
+	srcRel, err := cleanRel(srcRel)
+	if err != nil || srcRel == "" {
+		return errBad("invalid path")
+	}
+	dstRel, err = cleanRel(dstRel)
+	if err != nil || dstRel == "" {
+		return errBad("invalid path")
+	}
+	src, err := m.savedAbs(srcRel)
+	if err != nil {
+		return err
+	}
+	dst, err := m.savedAbs(dstRel)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Lstat(src)
+	if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
+		return &httpError{404, "not found"}
+	}
+	if src == dst {
+		return nil
+	}
+	if pi, err := os.Stat(filepath.Dir(dst)); err != nil || !pi.IsDir() {
+		return &httpError{404, "destination folder not found"}
+	}
+	if exists(dst) && !strings.EqualFold(src, dst) {
+		return &httpError{409, "target already exists"}
+	}
+	if fi.IsDir() && within(src, dst) {
+		return errBad("cannot put a folder into itself")
+	}
+	if err := moveEntry(src, dst); err != nil {
+		return err
+	}
+	m.rekey(fi.IsDir(), savedPrefix+srcRel, savedPrefix+dstRel)
+	m.lib.invalidate()
+	return nil
+}

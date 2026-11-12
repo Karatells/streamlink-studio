@@ -61,6 +61,16 @@ type Settings struct {
 	TelegramControl bool     `json:"telegram_control"` // false = read-only bot
 	TelegramTypes   []string `json:"telegram_types"`   // nil = all notification types
 	TelegramLang    string   `json:"telegram_lang"`
+
+	// FTP / FTPS server for the Saved file manager.
+	FTPOn         bool   `json:"ftp_on"`
+	FTPPort       int    `json:"ftp_port"`
+	FTPUser       string `json:"ftp_user"`
+	FTPPass       string `json:"ftp_pass"`
+	FTPReadOnly   bool   `json:"ftp_readonly"`
+	FTPRequireTLS bool   `json:"ftp_require_tls"`
+	FTPPassive    string `json:"ftp_passive"`   // "50000-50100"; empty = any port
+	FTPPublicIP   string `json:"ftp_public_ip"` // announced in PASV replies (NAT)
 	// Compression defaults (manual dialog) and the automatic rule.
 	CompressCodec    string `json:"compress_codec"`     // h264 | h265
 	CompressLevel    string `json:"compress_level"`     // light | balanced | strong

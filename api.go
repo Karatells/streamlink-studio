@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +22,7 @@ type API struct {
 	m    *Manager
 	auth *Auth
 	tg   *Telegram
+	ftp  *FTP
 }
 
 // ------------------------------------------------------------- helpers
@@ -137,6 +139,15 @@ type SettingsView struct {
 	TelegramTypes    []string `json:"telegram_types"`
 	TelegramLang     string   `json:"telegram_lang"`
 
+	FTPOn         bool   `json:"ftp_on"`
+	FTPPort       int    `json:"ftp_port"`
+	FTPUser       string `json:"ftp_user"`
+	HasFTPPass    bool   `json:"has_ftp_pass"`
+	FTPReadOnly   bool   `json:"ftp_readonly"`
+	FTPRequireTLS bool   `json:"ftp_require_tls"`
+	FTPPassive    string `json:"ftp_passive"`
+	FTPPublicIP   string `json:"ftp_public_ip"`
+
 	CompressCodec    string `json:"compress_codec"`
 	CompressLevel    string `json:"compress_level"`
 	CompressHeight   int    `json:"compress_height"`
@@ -152,7 +163,12 @@ func settingsView(s Settings) SettingsView {
 	if s.TelegramTypes == nil {
 		tt = append([]string{}, notifyTypes...)
 	}
-	return SettingsView{TelegramOn: s.TelegramOn, HasTelegramToken: s.TelegramToken != "", TelegramUsers: append([]int64{}, s.TelegramUsers...),
+	port := s.FTPPort
+	if port == 0 {
+		port = 2121
+	}
+	return SettingsView{FTPOn: s.FTPOn, FTPPort: port, FTPUser: s.FTPUser, HasFTPPass: s.FTPPass != "", FTPReadOnly: s.FTPReadOnly,
+		FTPRequireTLS: s.FTPRequireTLS, FTPPassive: s.FTPPassive, FTPPublicIP: s.FTPPublicIP, TelegramOn: s.TelegramOn, HasTelegramToken: s.TelegramToken != "", TelegramUsers: append([]int64{}, s.TelegramUsers...),
 		TelegramControl: s.TelegramControl, TelegramTypes: tt, TelegramLang: s.TelegramLang, HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
 		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
 		RemuxAfter: s.RemuxAfter, StreamlinkBin: s.StreamlinkBin, FFmpegBin: s.FFmpegBin, UpdateChannel: s.UpdateChannel,
@@ -532,6 +548,14 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		TelegramControl *bool     `json:"telegram_control"`
 		TelegramTypes   *[]string `json:"telegram_types"`
 		TelegramLang    *string   `json:"telegram_lang"`
+		FTPOn           *bool     `json:"ftp_on"`
+		FTPPort         *int      `json:"ftp_port"`
+		FTPUser         *string   `json:"ftp_user"`
+		FTPPass         *string   `json:"ftp_pass"` // nil = keep, "" = clear
+		FTPReadOnly     *bool     `json:"ftp_readonly"`
+		FTPRequireTLS   *bool     `json:"ftp_require_tls"`
+		FTPPassive      *string   `json:"ftp_passive"`
+		FTPPublicIP     *string   `json:"ftp_public_ip"`
 
 		CompressCodec    *string `json:"compress_codec"`
 		CompressLevel    *string `json:"compress_level"`
@@ -689,6 +713,61 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if s.TelegramOn && s.TelegramToken == "" {
 		writeErr(w, errBad("the Telegram bot needs a token"))
 		return
+	}
+	if in.FTPPort != nil {
+		if *in.FTPPort < 1 || *in.FTPPort > 65535 {
+			writeErr(w, errBad("FTP port must be 1-65535"))
+			return
+		}
+		s.FTPPort = *in.FTPPort
+	}
+	if in.FTPUser != nil {
+		u := strings.TrimSpace(*in.FTPUser)
+		if len(u) > 64 || strings.ContainsAny(u, " \t\r\n\x00") {
+			writeErr(w, errBad("FTP user name: up to 64 characters, no spaces"))
+			return
+		}
+		s.FTPUser = u
+	}
+	if in.FTPPass != nil {
+		if p := *in.FTPPass; p != "" && (len(p) < 8 || len(p) > 128 || strings.ContainsAny(p, "\r\n\x00")) {
+			writeErr(w, errBad("FTP password must be 8-128 characters"))
+			return
+		}
+		s.FTPPass = *in.FTPPass
+	}
+	if in.FTPPassive != nil {
+		if _, _, err := parsePassiveRange(*in.FTPPassive); err != nil {
+			writeErr(w, errBad(err.Error()))
+			return
+		}
+		s.FTPPassive = strings.TrimSpace(*in.FTPPassive)
+	}
+	if in.FTPPublicIP != nil {
+		ip := strings.TrimSpace(*in.FTPPublicIP)
+		if ip != "" && net.ParseIP(ip).To4() == nil {
+			writeErr(w, errBad("public IP must be an IPv4 address"))
+			return
+		}
+		s.FTPPublicIP = ip
+	}
+	if in.FTPReadOnly != nil {
+		s.FTPReadOnly = *in.FTPReadOnly
+	}
+	if in.FTPRequireTLS != nil {
+		s.FTPRequireTLS = *in.FTPRequireTLS
+	}
+	if in.FTPOn != nil {
+		s.FTPOn = *in.FTPOn
+	}
+	if s.FTPOn {
+		if s.FTPPort == 0 {
+			s.FTPPort = 2121
+		}
+		if s.FTPUser == "" || s.FTPPass == "" {
+			writeErr(w, errBad("the FTP server needs a user name and a password"))
+			return
+		}
 	}
 	if in.CompressCodec != nil {
 		s.CompressCodec = *in.CompressCodec
@@ -980,6 +1059,7 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/notifications", a.listNotifications)
 	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
 	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
+	mux.HandleFunc("GET /api/ftp", a.ftpStatus)
 	mux.HandleFunc("GET /api/telegram", a.telegramStatus)
 	mux.HandleFunc("POST /api/telegram/test", a.telegramTest)
 	mux.HandleFunc("GET /api/gotify", a.gotifyStatus)

@@ -508,5 +508,21 @@
   "f_trim_pick": "Choose a folder in Saved…",
   "f_trim_same": "Next to the original",
   "f_trim_here": "Save clip here",
-  "f_clip_started_saved": "Clip is being cut and will appear in Saved"
+  "f_clip_started_saved": "Clip is being cut and will appear in Saved",
+  "set_tab_ftp": "FTP",
+  "ftp_hint": "An FTP server for the Saved files: upload, download, rename, move and delete from any FTP client (FileZilla, WinSCP, lftp, a phone app). It shows exactly the Saved folder tree. Plain FTP sends the password unencrypted — use FTPS (explicit TLS, supported with a self-signed certificate) outside a trusted network.",
+  "ftp_enable": "Enable the FTP server",
+  "ftp_user": "User name",
+  "ftp_pass": "Password (at least 8 characters)",
+  "ftp_port": "Port",
+  "ftp_passive": "Passive data ports",
+  "ftp_public_ip": "Public IP address (optional)",
+  "ftp_ports_hint": "Behind a firewall or NAT / Docker: open the control port and the passive port range, and enter your public IP so clients know where to connect for data transfers. Only passive mode is supported.",
+  "ftp_readonly": "Read-only",
+  "ftp_readonly_hint": "Clients can browse and download, but not change anything.",
+  "ftp_require_tls": "Require FTPS (TLS)",
+  "ftp_require_tls_hint": "Plain-text logins and transfers are refused; clients must use “explicit FTP over TLS”. Accept the self-signed certificate once (fingerprint below).",
+  "ftp_running": "Running · connected clients: {n}",
+  "ftp_stopped": "The server is stopped.",
+  "ftp_fp": "Certificate SHA-256"
 }

@@ -107,6 +107,8 @@ func main() {
 	api.tg = NewTelegram(api)
 	m.extraSink = api.tg.Enqueue
 	go api.tg.Run(ctx)
+	api.ftp = NewFTP(api)
+	go api.ftp.Run(ctx)
 	go m.RunAutoCompress(ctx)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
