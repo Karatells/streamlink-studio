@@ -71,24 +71,21 @@ func (m *Manager) jobBusy(name string) bool {
 	return false
 }
 
-// Compress queues one re-encode job per file (async).
-func (m *Manager) Compress(names []string, o CompressOpts) ([]Job, error) {
+// Compress queues one re-encode job per file ref (async).
+func (m *Manager) Compress(refs []string, o CompressOpts) ([]Job, error) {
 	if err := o.normalize(); err != nil {
 		return nil, err
 	}
-	for _, n := range names {
-		if _, err := os.Stat(filepath.Join(m.cfg.RecDir, n)); err != nil {
-			return nil, &httpError{404, "file not found: " + n}
-		}
-		if m.ActiveFile(n) {
-			return nil, &httpError{409, "file is being recorded: " + n}
+	for _, n := range refs {
+		if _, err := m.srcFile(n); err != nil {
+			return nil, err
 		}
 		if m.jobBusy(n) {
 			return nil, &httpError{409, "file is already being processed: " + n}
 		}
 	}
 	var out []Job
-	for _, n := range names {
+	for _, n := range refs {
 		j, err := m.startCompress(n, o)
 		if err != nil {
 			return out, err
@@ -98,17 +95,26 @@ func (m *Manager) Compress(names []string, o CompressOpts) ([]Job, error) {
 	return out, nil
 }
 
-func (m *Manager) startCompress(name string, o CompressOpts) (*Job, error) {
-	in := filepath.Join(m.cfg.RecDir, name)
-	base := strings.TrimSuffix(name, filepath.Ext(name))
-	outName, err := reserveName(m.cfg.RecDir, base+"_compressed.mp4", ".mp4")
+func (m *Manager) startCompress(ref string, o CompressOpts) (*Job, error) {
+	in, err := m.refPath(ref)
 	if err != nil {
 		return nil, err
 	}
-	out := filepath.Join(m.cfg.RecDir, outName)
-	m.meta.copy(name, outName)
-	m.meta.setCompressed(outName)
-	j := m.newJobAs("compress", name, outName, "queued")
+	dirRef, dirAbs, err := m.outputTarget(ref, nil)
+	if err != nil {
+		return nil, err
+	}
+	_, name := splitRef(ref)
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	outName, err := reserveName(dirAbs, base+"_compressed.mp4", ".mp4")
+	if err != nil {
+		return nil, err
+	}
+	outRef := joinRef(dirRef, outName)
+	out := filepath.Join(dirAbs, outName)
+	m.meta.copy(ref, outRef)
+	m.meta.setCompressed(outRef)
+	j := m.newJobAs("compress", ref, outRef, "queued")
 	snap := *j
 	m.wg.Add(1)
 	go func() {
@@ -117,28 +123,27 @@ func (m *Manager) startCompress(name string, o CompressOpts) (*Job, error) {
 		defer func() { <-m.enc }()
 		if _, err := os.Stat(in); err != nil { // deleted while queued
 			m.setJob(j, func(j *Job) { j.Status, j.Error = "error", "source file no longer exists" })
-			m.meta.remove(outName)
+			m.meta.remove(outRef)
 			_ = os.Remove(out)
 			return
 		}
 		m.setJob(j, func(j *Job) { j.Status, j.Started = "running", time.Now() })
 		m.jobEvent(j, "job_started")
 		if err := m.runFFmpeg(j, compressArgs(in, out, o), in, 0); err != nil {
-			m.meta.remove(outName)
+			m.meta.remove(outRef)
 			return
 		}
-		m.meta.setCompressed(name)
-		m.finishCompress(j, name, outName, o)
+		m.meta.setCompressed(ref)
+		m.finishCompress(j, ref, in, outRef, out, o)
 	}()
 	return &snap, nil
 }
 
 // finishCompress applies the "replace original" choice once the encode succeeded.
-func (m *Manager) finishCompress(j *Job, name, outName string, o CompressOpts) {
+func (m *Manager) finishCompress(j *Job, ref, in, outRef, out string, o CompressOpts) {
 	if !o.Replace {
 		return
 	}
-	in, out := filepath.Join(m.cfg.RecDir, name), filepath.Join(m.cfg.RecDir, outName)
 	fi, e1 := os.Stat(in)
 	fo, e2 := os.Stat(out)
 	if e1 != nil || e2 != nil {
@@ -146,23 +151,22 @@ func (m *Manager) finishCompress(j *Job, name, outName string, o CompressOpts) {
 	}
 	if fo.Size() >= fi.Size() { // no gain: keep the original
 		_ = os.Remove(out)
-		m.meta.remove(outName)
+		m.meta.remove(outRef)
 		m.setJob(j, func(j *Job) { j.Error = "result is not smaller - original kept" })
 		return
 	}
-	if m.ActiveFile(name) {
+	if m.ActiveFile(ref) {
 		return
 	}
-	if filepath.Ext(name) == ".mp4" { // same name: swap the file in place
+	if strings.EqualFold(filepath.Ext(in), ".mp4") { // same name: swap the file in place
 		if os.Rename(out, in) == nil {
-			m.meta.remove(outName)
-			m.setJob(j, func(j *Job) { j.Output = name })
+			m.meta.remove(outRef)
+			m.setJob(j, func(j *Job) { j.Output = ref })
 		}
 		return
 	}
 	if os.Remove(in) == nil {
-		m.meta.setSavedCarry(name, outName)
-		m.meta.remove(name)
+		m.meta.remove(ref)
 	}
 }
 
@@ -200,7 +204,7 @@ func (m *Manager) autoCompressOnce() {
 			continue
 		}
 		fi, err := e.Info()
-		if err != nil || fi.ModTime().After(cutoff) || metas[n].Compressed || m.meta.isSaved(n) || m.ActiveFile(n) || m.jobBusy(n) {
+		if err != nil || fi.ModTime().After(cutoff) || metas[n].Compressed || m.ActiveFile(n) || m.jobBusy(n) {
 			continue
 		}
 		if _, err := m.startCompress(n, o); err == nil {

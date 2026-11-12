@@ -134,10 +134,6 @@ func (a *API) buildStats() map[string]any {
 	var week int64
 	for _, r := range recs {
 		total += r.Size
-		if r.Saved {
-			savedCount++
-			savedSize += r.Size
-		}
 		if r.Recording {
 			recording++
 		}
@@ -166,10 +162,16 @@ func (a *API) buildStats() map[string]any {
 		bigs = append(bigs, big{r.Name, r.Streamer, r.Size})
 	}
 
+	lib := a.m.library()
+	savedCount, savedSize = lib.saved, lib.savedBytes
+
 	// the app's own files (database, sessions, cookies, ...), without the recordings
 	dataSize := dirSize(a.m.cfg.DataDir)
 	if strings.HasPrefix(a.m.cfg.RecDir, a.m.cfg.DataDir) {
 		dataSize -= dirSize(a.m.cfg.RecDir)
+	}
+	if strings.HasPrefix(a.m.cfg.SavedDir, a.m.cfg.DataDir) {
+		dataSize -= savedSize
 	}
 
 	disk := statDisk(a.m.cfg.RecDir)

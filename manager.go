@@ -19,9 +19,10 @@ import (
 )
 
 type Config struct {
-	Addr    string
-	DataDir string
-	RecDir  string
+	Addr     string
+	DataDir  string
+	RecDir   string
+	SavedDir string // the "Saved" file manager root
 }
 
 const (
@@ -91,8 +92,18 @@ type Manager struct {
 
 func NewManager(cfg Config, st *Store) *Manager {
 	ms := openMeta(filepath.Join(cfg.DataDir, "recordings.json"))
-	ms.pruneMissing(cfg.RecDir)
 	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
+	if cfg.SavedDir != "" {
+		_ = ensureDir(cfg.SavedDir)
+		m.MigrateSaved(filepath.Join(cfg.DataDir, "saved.json"))
+	}
+	ms.pruneMissing(func(key string) bool {
+		p := filepath.Join(cfg.RecDir, key)
+		if rel, ok := strings.CutPrefix(key, savedPrefix); ok {
+			p = filepath.Join(cfg.SavedDir, filepath.FromSlash(rel))
+		}
+		return exists(p)
+	})
 	m.notes = OpenNotifier(filepath.Join(cfg.DataDir, "notifications.json"), func() []string { return st.Settings().NotifyOff })
 	m.enc = make(chan struct{}, 1)
 	m.elog = OpenEventLog(filepath.Join(cfg.DataDir, "events.json"))

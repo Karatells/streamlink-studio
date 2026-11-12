@@ -174,7 +174,6 @@ type RecInfo struct {
 	Title     string    `json:"title,omitempty"`
 	Ext       string    `json:"ext"`
 	Recording bool      `json:"recording"`
-	Saved     bool      `json:"saved"`
 }
 
 // listRecordings builds the library. Streamer / platform / start time come from
@@ -183,10 +182,7 @@ type RecInfo struct {
 func (a *API) listRecordings() []RecInfo {
 	entries, _ := os.ReadDir(a.m.cfg.RecDir)
 	channels := a.m.st.Channels()
-	byID := map[string]Channel{}
-	for _, c := range channels {
-		byID[c.ID] = c
-	}
+	byID := channelIndex(channels)
 	metas := a.m.meta.snapshot()
 	out := []RecInfo{}
 	for _, e := range entries {
@@ -198,18 +194,8 @@ func (a *API) listRecordings() []RecInfo {
 			continue
 		}
 		ri := RecInfo{Name: e.Name(), Size: fi.Size(), ModTime: fi.ModTime(),
-			Ext: strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name())), "."), Recording: a.m.ActiveFile(e.Name()), Saved: a.m.meta.isSaved(e.Name())}
-		if md, ok := metas[e.Name()]; ok && md.Streamer != "" {
-			ri.Streamer, ri.Platform, ri.Title, ri.Started = md.Streamer, md.Platform, md.Title, md.Started
-			if c, ok := byID[md.ChannelID]; ok { // follow channel renames
-				ri.Streamer = streamerName(c)
-			}
-		} else {
-			ri.Streamer, ri.Platform, ri.Started = guessLegacy(e.Name(), fi.ModTime(), channels)
-		}
-		if ri.Started.IsZero() {
-			ri.Started = fi.ModTime()
-		}
+			Ext: strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name())), "."), Recording: a.m.ActiveFile(e.Name())}
+		ri.Streamer, ri.Platform, ri.Title, ri.Started = mediaInfo(e.Name(), e.Name(), fi.ModTime(), metas, channels, byID)
 		out = append(out, ri)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
@@ -229,19 +215,15 @@ func (a *API) state(w http.ResponseWriter, r *http.Request) {
 			active = append(active, v)
 		}
 	}
-	n, nSaved := 0, 0
+	n := 0
 	if es, err := os.ReadDir(a.m.cfg.RecDir); err == nil {
 		for _, e := range es {
-			if e.IsDir() || !isMediaFile(e.Name()) || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			if a.m.meta.isSaved(e.Name()) {
-				nSaved++
-			} else {
+			if !e.IsDir() && isMediaFile(e.Name()) && !strings.HasPrefix(e.Name(), ".") {
 				n++
 			}
 		}
 	}
+	nSaved := a.m.library().saved
 	upd := map[string]any{"available": false}
 	if c, ok := a.upd.Cached(); ok && c.Available && c.Latest != nil {
 		upd = map[string]any{"available": true, "version": c.Latest.Tag}
@@ -821,7 +803,11 @@ func (a *API) recNames(names []string) ([]string, error) {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(names))
 	for _, n := range names {
-		if !safeRecordingName(n) {
+		if isSavedRef(n) {
+			if rel, err := cleanRel(strings.TrimPrefix(n, savedPrefix)); err != nil || rel == "" {
+				return nil, errBad("invalid file name")
+			}
+		} else if !safeRecordingName(n) {
 			return nil, errBad("invalid file name")
 		}
 		if !seen[n] {
@@ -862,11 +848,11 @@ func (a *API) bulkDeleteRecs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"deleted": deleted, "failed": failed})
 }
 
-// saveRecs moves recordings to / from the "Saved" tab.
+// saveRecs moves recordings into the Saved file manager (optionally into a folder).
 func (a *API) saveRecs(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Names []string `json:"names"`
-		Saved *bool    `json:"saved"`
+		Dest  string   `json:"dest"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -877,21 +863,22 @@ func (a *API) saveRecs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	for _, n := range names {
-		if _, err := os.Stat(filepath.Join(a.m.cfg.RecDir, n)); err != nil {
-			writeErr(w, &httpError{404, "file not found: " + n})
-			return
-		}
+	res, err := a.m.SaveRecordings(names, in.Dest)
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
-	a.m.meta.setSaved(names, in.Saved == nil || *in.Saved)
-	w.WriteHeader(http.StatusNoContent)
+	a.m.lib.invalidate()
+	writeJSON(w, 200, res)
 }
 
-// mergeRecs joins several recordings into one, oldest first, without re-encoding.
+// mergeRecs joins several files (recordings or Saved files) into one, oldest
+// first, without re-encoding. dest (optional) is a Saved folder for the result.
 func (a *API) mergeRecs(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Names         []string `json:"names"`
 		DeleteSources bool     `json:"delete_sources"`
+		Dest          *string  `json:"dest"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -906,22 +893,17 @@ func (a *API) mergeRecs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errBad("select at least two files to merge"))
 		return
 	}
-	want := map[string]bool{}
+	items := make([]RecInfo, 0, len(names))
 	for _, n := range names {
-		want[n] = true
-	}
-	var items []RecInfo
-	for _, ri := range a.listRecordings() { // sorted newest first
-		if want[ri.Name] {
-			items = append(items, ri)
+		ri, err := a.m.infoFor(n)
+		if err != nil {
+			writeErr(w, err)
+			return
 		}
-	}
-	if len(items) != len(names) {
-		writeErr(w, &httpError{404, "some files were not found"})
-		return
+		items = append(items, ri)
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Started.Before(items[j].Started) }) // oldest first
-	j, err := a.m.Merge(items, in.DeleteSources)
+	j, err := a.m.Merge(items, in.DeleteSources, in.Dest)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -972,12 +954,13 @@ func (a *API) trimRec(w http.ResponseWriter, r *http.Request) {
 		Start float64 `json:"start"`
 		End   float64 `json:"end"`
 		Mode  string  `json:"mode"`
+		Dest  *string `json:"dest"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
 		return
 	}
-	j, err := a.m.Trim(r.PathValue("name"), in.Start, in.End, in.Mode)
+	j, err := a.m.Trim(r.PathValue("name"), in.Start, in.End, in.Mode, in.Dest)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -1039,6 +1022,20 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("DELETE /api/recordings/{name}", a.deleteRec)
 	mux.HandleFunc("POST /api/recordings/{name}/convert", a.convertRec)
 	mux.HandleFunc("POST /api/recordings/{name}/trim", a.trimRec)
+	mux.HandleFunc("GET /api/files", a.listFiles)
+	mux.HandleFunc("GET /api/files/tree", a.filesTree)
+	mux.HandleFunc("GET /api/files/zip", a.filesZip)
+	mux.HandleFunc("GET /api/files/stream/{path...}", a.filesServe(false))
+	mux.HandleFunc("GET /api/files/download/{path...}", a.filesServe(true))
+	mux.HandleFunc("POST /api/files/mkdir", a.filesMkdir)
+	mux.HandleFunc("POST /api/files/rename", a.filesRename)
+	mux.HandleFunc("POST /api/files/move", a.filesTransfer(false))
+	mux.HandleFunc("POST /api/files/copy", a.filesTransfer(true))
+	mux.HandleFunc("POST /api/files/delete", a.filesDelete)
+	mux.HandleFunc("POST /api/files/restore", a.filesRestore)
+	mux.HandleFunc("POST /api/files/upload", a.filesUpload)
+	mux.HandleFunc("POST /api/files/trim", a.filesTrim)
+	mux.HandleFunc("POST /api/files/convert", a.filesConvert)
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.m.Jobs()) })
 	mux.HandleFunc("GET /healthz", a.healthz)
 	mux.HandleFunc("GET /api/health", a.health)

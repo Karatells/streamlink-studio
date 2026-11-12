@@ -57,6 +57,7 @@ func main() {
 	flag.StringVar(&cfg.Addr, "addr", env("STUDIO_ADDR", ":8080"), "listen address (env STUDIO_ADDR)")
 	flag.StringVar(&cfg.DataDir, "data", env("STUDIO_DATA", "./data"), "data directory (env STUDIO_DATA)")
 	flag.StringVar(&cfg.RecDir, "rec", os.Getenv("STUDIO_RECORDINGS"), "recordings directory (env STUDIO_RECORDINGS, default <data>/recordings)")
+	flag.StringVar(&cfg.SavedDir, "saved", os.Getenv("STUDIO_SAVED"), "Saved files directory (env STUDIO_SAVED, default <data>/saved)")
 	flag.Parse()
 	if *showVersion {
 		c := currentCommit()
@@ -73,7 +74,10 @@ func main() {
 	if cfg.RecDir == "" {
 		cfg.RecDir = filepath.Join(cfg.DataDir, "recordings")
 	}
-	for _, d := range []string{cfg.DataDir, cfg.RecDir} {
+	if cfg.SavedDir == "" {
+		cfg.SavedDir = filepath.Join(cfg.DataDir, "saved")
+	}
+	for _, d := range []string{cfg.DataDir, cfg.RecDir, cfg.SavedDir} {
 		if err := ensureDir(d); err != nil {
 			log.Fatalf("cannot create %s: %v", d, err)
 		}

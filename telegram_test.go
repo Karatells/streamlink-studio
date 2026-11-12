@@ -267,8 +267,12 @@ func TestTelegramRecordingsFlow(t *testing.T) {
 		t.Fatal("pick list missing")
 	}
 	tg.handle(cbq(111, "fs:0"))
-	if !api.m.meta.isSaved(name) {
-		t.Fatal("save toggle failed")
+	if _, err := os.Stat(filepath.Join(api.m.cfg.SavedDir, name)); err != nil {
+		t.Fatal("file not moved to Saved")
+	}
+	tg.handle(msg(111, 111, "private", "/recordings"))
+	if name, ok = tg.pick(111, "0"); !ok {
+		t.Fatal("pick list missing after save")
 	}
 	tg.handle(cbq(111, "fd:0"))
 	if !strings.Contains(f.lastText(), name) {
@@ -282,7 +286,7 @@ func TestTelegramRecordingsFlow(t *testing.T) {
 		t.Fatal("confirmed delete did not remove the file")
 	}
 	tg.handle(cbq(111, "fy:99")) // stale / out of range index must not delete anything
-	if len(api.listRecordings()) != 2 {
+	if len(api.listRecordings()) != 1 {
 		t.Fatal("out-of-range index changed state")
 	}
 }

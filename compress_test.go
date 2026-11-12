@@ -132,7 +132,9 @@ func TestAutoCompressPicksOldUnsavedOnly(t *testing.T) {
 	for _, n := range []string{"old.mp4", "keep.mp4"} {
 		_ = os.Chtimes(filepath.Join(rec, n), old, old)
 	}
-	api.m.meta.setSaved([]string{"keep.mp4"}, true)
+	if res, err := api.m.SaveRecordings([]string{"keep.mp4"}, ""); err != nil || len(res.Failed) > 0 {
+		t.Fatal(err, res)
+	}
 	call(t, api, "PUT", "/api/settings", map[string]any{"compress_auto_days": 5, "compress_level": "strong"})
 	api.m.autoCompressOnce()
 	if len(api.m.Jobs()) != 1 || api.m.Jobs()[0].Input != "old.mp4" {

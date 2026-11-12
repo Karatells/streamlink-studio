@@ -21,7 +21,7 @@ func testAPI(t *testing.T) (*API, string) {
 	}
 	rec := filepath.Join(dir, "rec")
 	os.MkdirAll(rec, 0o755)
-	m := NewManager(Config{DataDir: dir, RecDir: rec}, st)
+	m := NewManager(Config{DataDir: dir, RecDir: rec, SavedDir: filepath.Join(dir, "saved")}, st)
 	a := &API{m: m, auth: NewAuth("", "", dir), upd: NewUpdater(m)}
 	a.tg = NewTelegram(a)
 	m.extraSink = a.tg.Enqueue
@@ -48,33 +48,32 @@ func TestBulkDeleteAndSave(t *testing.T) {
 	for _, n := range []string{"a.mp4", "b.mp4", "c.mp4"} {
 		os.WriteFile(filepath.Join(rec, n), []byte("x"), 0o644)
 	}
-	if c, _ := call(t, a, "POST", "/api/recordings/save", map[string]any{"names": []string{"b.mp4"}}); c != 204 {
-		t.Fatal("save", c)
+	a.m.meta.set([]string{"b.mp4"}, RecMeta{Streamer: "bob", Started: time.Now()})
+	if c, b := call(t, a, "POST", "/api/recordings/save", map[string]any{"names": []string{"b.mp4"}}); c != 200 {
+		t.Fatal("save", c, string(b))
 	}
 	var list []RecInfo
 	_, b := call(t, a, "GET", "/api/recordings", nil)
 	json.Unmarshal(b, &list)
-	for _, r := range list {
-		if r.Saved != (r.Name == "b.mp4") {
-			t.Fatalf("saved flag wrong: %+v", r)
-		}
+	if len(list) != 2 {
+		t.Fatalf("saved file must leave the recordings list: %+v", list)
 	}
-	// saved flag survives a restart
-	if !openMeta(filepath.Join(filepath.Dir(rec), "recordings.json")).isSaved("b.mp4") {
-		t.Fatal("saved not persisted")
+	if _, err := os.Stat(filepath.Join(a.m.cfg.SavedDir, "b.mp4")); err != nil {
+		t.Fatal("b.mp4 not in Saved")
+	}
+	// its metadata followed it and survives a restart
+	if _, ok := openMeta(filepath.Join(filepath.Dir(rec), "recordings.json")).snapshot()["saved/b.mp4"]; !ok {
+		t.Fatal("metadata not moved with the file")
 	}
 	if c, _ := call(t, a, "POST", "/api/recordings/delete", map[string]any{"names": []string{"../etc/passwd"}}); c != 400 {
 		t.Fatal("path traversal accepted", c)
 	}
-	c, b := call(t, a, "POST", "/api/recordings/delete", map[string]any{"names": []string{"a.mp4", "b.mp4", "a.mp4"}})
-	if c != 200 || !strings.Contains(string(b), `"deleted":["a.mp4","b.mp4"]`) {
+	c, b := call(t, a, "POST", "/api/recordings/delete", map[string]any{"names": []string{"a.mp4", "a.mp4"}})
+	if c != 200 || !strings.Contains(string(b), `"deleted":["a.mp4"]`) {
 		t.Fatal(c, string(b))
 	}
 	if _, err := os.Stat(filepath.Join(rec, "c.mp4")); err != nil {
 		t.Fatal("c.mp4 must remain")
-	}
-	if a.m.meta.isSaved("b.mp4") {
-		t.Fatal("saved flag not cleaned up")
 	}
 }
 
@@ -199,7 +198,9 @@ func TestStats(t *testing.T) {
 	os.WriteFile(filepath.Join(rec, "b.mp4"), make([]byte, 3000), 0o644)
 	a.m.meta.set([]string{"a.mp4"}, RecMeta{Streamer: "bob", Platform: "Twitch", Started: time.Now()})
 	a.m.meta.set([]string{"b.mp4"}, RecMeta{Streamer: "bob", Platform: "Twitch", Started: time.Now().AddDate(0, 0, -2)})
-	a.m.meta.setSaved([]string{"b.mp4"}, true)
+	if res, err := a.m.SaveRecordings([]string{"b.mp4"}, ""); err != nil || len(res.Failed) > 0 {
+		t.Fatal(err, res)
+	}
 	c, b := call(t, a, "GET", "/api/stats", nil)
 	if c != 200 {
 		t.Fatal(c, string(b))
@@ -218,16 +219,16 @@ func TestStats(t *testing.T) {
 	// field names are snake_case in JSON; re-read the ones we care about
 	var raw map[string]map[string]any
 	json.Unmarshal(b, &raw)
-	if raw["library"]["count"].(float64) != 2 || raw["library"]["size"].(float64) != 4000 || raw["library"]["saved_size"].(float64) != 3000 {
+	if raw["library"]["count"].(float64) != 1 || raw["library"]["size"].(float64) != 1000 || raw["library"]["saved_count"].(float64) != 1 || raw["library"]["saved_size"].(float64) != 3000 {
 		t.Fatalf("library: %v", raw["library"])
 	}
 	if st.Disk == nil || st.Disk.Total == 0 || st.Disk.Used > st.Disk.Total {
 		t.Fatalf("disk: %+v", st.Disk)
 	}
-	if len(st.Streamers) != 1 || st.Streamers[0].Count != 2 || st.Streamers[0].Size != 4000 {
+	if len(st.Streamers) != 1 || st.Streamers[0].Count != 1 || st.Streamers[0].Size != 1000 {
 		t.Fatalf("streamers: %+v", st.Streamers)
 	}
-	if len(st.Days) != 14 || st.Days[13].Count != 1 || st.Days[11].Count != 1 {
+	if len(st.Days) != 14 || st.Days[13].Count != 1 {
 		t.Fatalf("days: %+v", st.Days)
 	}
 }

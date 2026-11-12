@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,29 +24,26 @@ type RecMeta struct {
 	Compressed bool `json:"compressed,omitempty"`
 }
 
-// metaStore is a small JSON index: file name -> RecMeta.
+// metaStore is a small JSON index: ref -> RecMeta (see files.go for refs).
 type metaStore struct {
-	mu        sync.Mutex
-	path      string
-	data      map[string]RecMeta
-	savedPath string
-	saved     map[string]bool // recordings the user moved to the "Saved" tab
+	mu   sync.Mutex
+	path string
+	data map[string]RecMeta
 }
 
 func openMeta(path string) *metaStore {
-	ms := &metaStore{path: path, data: map[string]RecMeta{}, savedPath: filepath.Join(filepath.Dir(path), "saved.json"), saved: map[string]bool{}}
+	ms := &metaStore{path: path, data: map[string]RecMeta{}}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &ms.data)
 	}
-	if b, err := os.ReadFile(ms.savedPath); err == nil {
-		var names []string
-		if json.Unmarshal(b, &names) == nil {
-			for _, n := range names {
-				ms.saved[n] = true
-			}
-		}
-	}
 	return ms
+}
+
+// parseNameList reads the legacy saved.json (a JSON array of file names).
+func parseNameList(b []byte) []string {
+	var names []string
+	_ = json.Unmarshal(b, &names)
+	return names
 }
 
 func (ms *metaStore) saveLocked() {
@@ -59,42 +55,6 @@ func (ms *metaStore) saveLocked() {
 	if os.WriteFile(tmp, b, 0o640) == nil {
 		_ = os.Rename(tmp, ms.path)
 	}
-}
-
-func (ms *metaStore) saveSavedLocked() {
-	names := make([]string, 0, len(ms.saved))
-	for n := range ms.saved {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	b, err := json.Marshal(names)
-	if err != nil {
-		return
-	}
-	tmp := ms.savedPath + ".tmp"
-	if os.WriteFile(tmp, b, 0o640) == nil {
-		_ = os.Rename(tmp, ms.savedPath)
-	}
-}
-
-// setSaved marks / unmarks recordings as saved.
-func (ms *metaStore) setSaved(names []string, v bool) {
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	for _, n := range names {
-		if v {
-			ms.saved[n] = true
-		} else {
-			delete(ms.saved, n)
-		}
-	}
-	ms.saveSavedLocked()
-}
-
-func (ms *metaStore) isSaved(name string) bool {
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	return ms.saved[name]
 }
 
 func (ms *metaStore) set(names []string, v RecMeta) {
@@ -125,6 +85,70 @@ func (ms *metaStore) copy(src, dst string) {
 	}
 }
 
+// copyPrefix duplicates every entry below one folder prefix ("saved/a/") under another.
+func (ms *metaStore) copyPrefix(from, to string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	add := map[string]RecMeta{}
+	for k, v := range ms.data {
+		if rest, ok := strings.CutPrefix(k, from); ok {
+			add[to+rest] = v
+		}
+	}
+	for k, v := range add {
+		ms.data[k] = v
+	}
+	if len(add) > 0 {
+		ms.saveLocked()
+	}
+}
+
+// rekey moves one entry to a new key (a renamed / moved file).
+func (ms *metaStore) rekey(from, to string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if v, ok := ms.data[from]; ok && from != to {
+		ms.data[to] = v
+		delete(ms.data, from)
+		ms.saveLocked()
+	}
+}
+
+// rekeyPrefix moves every entry below a folder prefix ("saved/a/" -> "saved/b/").
+func (ms *metaStore) rekeyPrefix(from, to string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	moved := map[string]RecMeta{}
+	for k, v := range ms.data {
+		if rest, ok := strings.CutPrefix(k, from); ok {
+			moved[to+rest] = v
+			delete(ms.data, k)
+		}
+	}
+	for k, v := range moved {
+		ms.data[k] = v
+	}
+	if len(moved) > 0 {
+		ms.saveLocked()
+	}
+}
+
+// removePrefix deletes the entry itself and everything below it.
+func (ms *metaStore) removePrefix(key string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	changed := false
+	for k := range ms.data {
+		if k == key || strings.HasPrefix(k, key+"/") {
+			delete(ms.data, k)
+			changed = true
+		}
+	}
+	if changed {
+		ms.saveLocked()
+	}
+}
+
 func (ms *metaStore) setCompressed(name string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
@@ -134,60 +158,34 @@ func (ms *metaStore) setCompressed(name string) {
 	ms.saveLocked()
 }
 
-// setSavedCarry moves the "saved" flag from one file to another.
-func (ms *metaStore) setSavedCarry(from, to string) {
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if ms.saved[from] {
-		ms.saved[to] = true
-		ms.saveSavedLocked()
-	}
-}
-
 func (ms *metaStore) remove(names ...string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	changed, savedChanged := false, false
+	changed := false
 	for _, n := range names {
 		if _, ok := ms.data[n]; ok {
 			delete(ms.data, n)
 			changed = true
 		}
-		if ms.saved[n] {
-			delete(ms.saved, n)
-			savedChanged = true
-		}
 	}
 	if changed {
 		ms.saveLocked()
-	}
-	if savedChanged {
-		ms.saveSavedLocked()
 	}
 }
 
 // pruneMissing drops entries of files that no longer exist (called at startup).
-func (ms *metaStore) pruneMissing(dir string) {
+func (ms *metaStore) pruneMissing(exists func(key string) bool) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	changed, savedChanged := false, false
-	for n := range ms.data {
-		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
-			delete(ms.data, n)
+	changed := false
+	for k := range ms.data {
+		if !exists(k) {
+			delete(ms.data, k)
 			changed = true
-		}
-	}
-	for n := range ms.saved {
-		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
-			delete(ms.saved, n)
-			savedChanged = true
 		}
 	}
 	if changed {
 		ms.saveLocked()
-	}
-	if savedChanged {
-		ms.saveSavedLocked()
 	}
 }
 

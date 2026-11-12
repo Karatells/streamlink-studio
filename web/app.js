@@ -388,7 +388,6 @@ const NATIVE = ['mp4', 'm4v', 'webm', 'mov']; // containers browsers can play na
 
 const filters = {
   all: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
-  saved: { q: '', streamer: '', from: '', to: '', sort: 'date_desc' },
 };
 
 function dayLabel(key) { // key = yyyy-mm-dd
@@ -437,15 +436,62 @@ function jobsView() {
   return { update };
 }
 
-function recordingsView(savedMode, sub) {
-  if (!savedMode && sub === 'jobs') return jobsView();
-  const filter = savedMode ? filters.saved : filters.all;
+/* shared dialogs */
+function mergeDialog(items, onDone) {
+  const ordered = [...items].sort((a, b) => new Date(a.started) - new Date(b.started));
+  const exts = new Set(ordered.map((r) => r.ext));
+  const streamers = new Set(ordered.map((r) => r.streamer));
+  const total = ordered.reduce((a, r) => a + r.size, 0);
+  const mixed = exts.size > 1;
+  const m = openModal({
+    title: t('rec_merge_title'),
+    body: `<div class="muted small">${esc(t('rec_merge_hint'))}</div>
+      <ol class="mergelist">${ordered.map((r) => `<li><span class="name">${esc(r.label || r.name)}</span><span class="muted small">${esc(new Date(r.started).toLocaleString())} · ${fmtSize(r.size)}</span></li>`).join('')}</ol>
+      ${mixed ? `<div class="result error">${esc(t('rec_merge_mixed'))}</div>` : ''}
+      ${streamers.size > 1 ? `<div class="result">${esc(t('rec_merge_streamers'))}</div>` : ''}
+      <label class="check mdel"><input type="checkbox" id="mdel"> <span>${esc(t('rec_merge_delete'))}<br><span class="muted small">${esc(t('rec_merge_delete_hint'))}</span></span></label>
+      <div class="muted small">${esc(t('rec_merge_total', { count: ordered.length, size: fmtSize(total) }))}</div>`,
+    footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="mgo" ${mixed ? 'disabled' : ''}>⛓ ${esc(t('rec_merge'))}</button>`,
+  });
+  $('#mgo', m).onclick = guard(async () => {
+    await api('POST', '/recordings/merge', { names: ordered.map((r) => r.name), delete_sources: $('#mdel', m).checked });
+    closeModal(); toast(t('rec_merge_started')); onDone();
+  });
+}
+
+async function compressDialog(items, onDone) {
+  const cfg = await api('GET', '/settings');
+  const total = items.reduce((a, r) => a + r.size, 0);
+  const opt = (v, cur, label) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
+  const m = openModal({
+    title: t('rec_compress_title'),
+    body: `<div class="muted small">${esc(t('rec_compress_hint'))}</div>
+      <div class="two">
+        <div class="field"><label>${esc(t('cmp_codec'))}</label><select id="cmp-codec">${opt('h264', cfg.compress_codec, 'H.264 (' + t('cmp_codec_h264') + ')')}${opt('h265', cfg.compress_codec, 'H.265 / HEVC (' + t('cmp_codec_h265') + ')')}</select></div>
+        <div class="field"><label>${esc(t('cmp_level'))}</label><select id="cmp-level">${['light', 'balanced', 'strong'].map((k) => opt(k, cfg.compress_level, t('cmp_level_' + k))).join('')}</select></div>
+      </div>
+      <div class="field"><label>${esc(t('cmp_height'))}</label><select id="cmp-height">${opt(0, cfg.compress_height, t('cmp_height_keep'))}${[1080, 720, 540, 480].map((h) => opt(h, cfg.compress_height, h + 'p')).join('')}</select><span class="muted small">${esc(t('cmp_height_hint'))}</span></div>
+      <label class="check mdel"><input type="checkbox" id="cmp-replace"> <span>${esc(t('cmp_replace'))}<br><span class="muted small">${esc(t('cmp_replace_hint'))}</span></span></label>
+      <div class="muted small">${esc(t('cmp_total', { count: items.length, size: fmtSize(total) }))}</div>`,
+    footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="cmp-go">🗜 ${esc(t('rec_compress'))}</button>`,
+  });
+  $('#cmp-go', m).onclick = guard(async () => {
+    await api('POST', '/recordings/compress', { names: items.map((r) => r.name), codec: $('#cmp-codec', m).value, level: $('#cmp-level', m).value,
+      max_height: parseInt($('#cmp-height', m).value, 10) || 0, replace: $('#cmp-replace', m).checked });
+    closeModal(); toast(t('cmp_started', { count: items.length })); onDone();
+  });
+}
+
+
+function recordingsView(sub) {
+  if (sub === 'jobs') return jobsView();
+  const filter = filters.all;
   const sel = new Set();          // selected file names
   const collapsed = new Set();    // collapsed group keys
   let visible = [];               // names in display order (for shift-click ranges)
   let lastIdx = -1;
   let lastSig = '';
-  $('#view').innerHTML = `${savedMode ? '' : recTabs('list')}
+  $('#view').innerHTML = `${recTabs('list')}
     <div class="row filters" style="margin-bottom:8px">
       <input type="search" id="q" class="grow" placeholder="${esc(t('rec_search'))}" value="${esc(filter.q)}">
       <select id="st"></select>
@@ -499,7 +545,7 @@ function recordingsView(savedMode, sub) {
       <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
       ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
       ${r.recording ? '' : `<button class="btn sm" data-a="trim" data-n="${esc(r.name)}">✂ ${esc(t('rec_trim'))}</button>`}
-      ${r.recording ? '' : `<button class="btn sm${r.saved ? ' on' : ''}" data-a="${r.saved ? 'unsave' : 'save'}" data-n="${esc(r.name)}">${r.saved ? '★ ' + esc(t('rec_unsave')) : '☆ ' + esc(t('rec_save'))}</button>`}
+      ${r.recording ? '' : `<button class="btn sm" data-a="save" data-n="${esc(r.name)}">☆ ${esc(t('rec_save'))}</button>`}
       <a class="btn sm" href="api/recordings/${enc(r.name)}/download" download>⬇</a>
       ${r.recording ? '' : `<button class="btn sm danger" data-a="del" data-n="${esc(r.name)}">🗑</button>`}
     </div></td></tr>`;
@@ -521,7 +567,7 @@ function recordingsView(savedMode, sub) {
       const table = open ? `<div class="card tblcard" style="padding:4px 8px"><table><thead><tr><th class="sel"></th><th>${esc(t('col_name'))}</th><th>${esc(t('col_streamer'))}</th>
         <th class="num">${esc(t('col_size'))}</th><th class="num">${esc(t('col_date'))}</th><th></th></tr></thead><tbody>${g.rows.map(rowHtml).join('')}</tbody></table></div>` : '';
       return `<section class="grp">${head}${table}</section>`;
-    }).join('') : `<div class="card"><div class="empty">${esc(t(savedMode ? 'rec_saved_none' : 'rec_none'))}</div></div>`;
+    }).join('') : `<div class="card"><div class="empty">${esc(t('rec_none'))}</div></div>`;
     // indeterminate state of the group checkboxes
     $$('[data-grpsel]').forEach((cb) => {
       const g = groups.find((x) => x.key === cb.dataset.grpsel);
@@ -549,7 +595,7 @@ function recordingsView(savedMode, sub) {
       <button class="btn sm" data-b="selall">${esc(t('rec_select_all'))}</button>
       <button class="btn sm" data-b="merge" ${items.length < 2 ? 'disabled' : ''} title="${esc(items.length < 2 ? t('rec_merge_need_two') : '')}">⛓ ${esc(t('rec_merge'))}</button>
       <button class="btn sm" data-b="compress">🗜 ${esc(t('rec_compress'))}</button>
-      <button class="btn sm" data-b="${savedMode ? 'unsave' : 'save'}">${savedMode ? '★ ' + esc(t('rec_unsave')) : '☆ ' + esc(t('rec_save'))}</button>
+      <button class="btn sm" data-b="save">☆ ${esc(t('rec_save'))}</button>
       <button class="btn sm danger" data-b="del">🗑 ${esc(t('delete'))}</button>
       <button class="btn sm" data-b="clear">✕ ${esc(t('rec_clear_sel'))}</button>`;
   };
@@ -608,61 +654,18 @@ function recordingsView(savedMode, sub) {
       case 'streamer': setStreamer(filter.streamer === name ? '' : name); break;
       case 'play': playerModal(rec); break;
       case 'trim': trimModal(rec); break;
-      case 'conv': await api('POST', `/recordings/${enc(name)}/convert`); refresh(); break;
-      case 'save': case 'unsave':
-        await api('POST', '/recordings/save', { names: [name], saved: b.dataset.a === 'save' });
-        toast(t(b.dataset.a === 'save' ? 'rec_saved_toast' : 'rec_unsaved_toast')); refresh(); update(); break;
+      case 'conv': await refConvert(name); refresh(); break;
+      case 'save':
+        pickFolderDialog({ title: t('f_save_to_title'), confirm: t('f_save_here'), onPick: async (dest) => {
+          const res = await api('POST', '/recordings/save', { names: [name], dest });
+          toast(res.failed.length ? res.failed[0].error : t('rec_saved_toast'), res.failed.length > 0); refresh(); update();
+        } }); break;
       case 'del':
         if (!confirm(t('confirm_delete_file', { name }))) return;
         await api('DELETE', `/recordings/${enc(name)}`);
         sel.delete(name); toast(t('deleted')); refresh(); update(); break;
     }
   }));
-
-  const mergeModal = (items) => {
-    const ordered = [...items].sort((a, b) => new Date(a.started) - new Date(b.started));
-    const exts = new Set(ordered.map((r) => r.ext));
-    const streamers = new Set(ordered.map((r) => r.streamer));
-    const total = ordered.reduce((a, r) => a + r.size, 0);
-    const mixed = exts.size > 1;
-    const m = openModal({
-      title: t('rec_merge_title'),
-      body: `<div class="muted small">${esc(t('rec_merge_hint'))}</div>
-        <ol class="mergelist">${ordered.map((r) => `<li><span class="name">${esc(r.name)}</span><span class="muted small">${esc(new Date(r.started).toLocaleString())} · ${fmtSize(r.size)}</span></li>`).join('')}</ol>
-        ${mixed ? `<div class="result error">${esc(t('rec_merge_mixed'))}</div>` : ''}
-        ${streamers.size > 1 ? `<div class="result">${esc(t('rec_merge_streamers'))}</div>` : ''}
-        <label class="check mdel"><input type="checkbox" id="mdel"> <span>${esc(t('rec_merge_delete'))}<br><span class="muted small">${esc(t('rec_merge_delete_hint'))}</span></span></label>
-        <div class="muted small">${esc(t('rec_merge_total', { count: ordered.length, size: fmtSize(total) }))}</div>`,
-      footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="mgo" ${mixed ? 'disabled' : ''}>⛓ ${esc(t('rec_merge'))}</button>`,
-    });
-    $('#mgo', m).onclick = guard(async () => {
-      await api('POST', '/recordings/merge', { names: ordered.map((r) => r.name), delete_sources: $('#mdel', m).checked });
-      closeModal(); sel.clear(); toast(t('rec_merge_started')); refresh(); update();
-    });
-  };
-
-  const compressModal = async (items) => {
-    const cfg = await api('GET', '/settings');
-    const total = items.reduce((a, r) => a + r.size, 0);
-    const opt = (v, cur, label) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
-    const m = openModal({
-      title: t('rec_compress_title'),
-      body: `<div class="muted small">${esc(t('rec_compress_hint'))}</div>
-        <div class="two">
-          <div class="field"><label>${esc(t('cmp_codec'))}</label><select id="cmp-codec">${opt('h264', cfg.compress_codec, 'H.264 (' + t('cmp_codec_h264') + ')')}${opt('h265', cfg.compress_codec, 'H.265 / HEVC (' + t('cmp_codec_h265') + ')')}</select></div>
-          <div class="field"><label>${esc(t('cmp_level'))}</label><select id="cmp-level">${['light', 'balanced', 'strong'].map((k) => opt(k, cfg.compress_level, t('cmp_level_' + k))).join('')}</select></div>
-        </div>
-        <div class="field"><label>${esc(t('cmp_height'))}</label><select id="cmp-height">${opt(0, cfg.compress_height, t('cmp_height_keep'))}${[1080, 720, 540, 480].map((h) => opt(h, cfg.compress_height, h + 'p')).join('')}</select><span class="muted small">${esc(t('cmp_height_hint'))}</span></div>
-        <label class="check mdel"><input type="checkbox" id="cmp-replace"> <span>${esc(t('cmp_replace'))}<br><span class="muted small">${esc(t('cmp_replace_hint'))}</span></span></label>
-        <div class="muted small">${esc(t('cmp_total', { count: items.length, size: fmtSize(total) }))}</div>`,
-      footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="cmp-go">🗜 ${esc(t('rec_compress'))}</button>`,
-    });
-    $('#cmp-go', m).onclick = guard(async () => {
-      await api('POST', '/recordings/compress', { names: items.map((r) => r.name), codec: $('#cmp-codec', m).value, level: $('#cmp-level', m).value,
-        max_height: parseInt($('#cmp-height', m).value, 10) || 0, replace: $('#cmp-replace', m).checked });
-      closeModal(); sel.clear(); toast(t('cmp_started', { count: items.length })); refresh(); update();
-    });
-  };
 
   $('#bulk').addEventListener('click', guard(async (e) => {
     const b = e.target.closest('[data-b]');
@@ -672,14 +675,15 @@ function recordingsView(savedMode, sub) {
     switch (b.dataset.b) {
       case 'clear': sel.clear(); render(); break;
       case 'selall': filtered().filter(selectable).forEach((r) => sel.add(r.name)); render(); break;
-      case 'merge': mergeModal(items); break;
-      case 'compress': compressModal(items); break;
-      case 'save': case 'unsave':
-        await api('POST', '/recordings/save', { names, saved: b.dataset.b === 'save' });
-        sel.clear(); toast(t(b.dataset.b === 'save' ? 'rec_saved_toast_n' : 'rec_unsaved_toast_n', { count: names.length })); refresh(); update(); break;
+      case 'merge': mergeDialog(items, () => { sel.clear(); refresh(); update(); }); break;
+      case 'compress': compressDialog(items, () => { sel.clear(); refresh(); update(); }); break;
+      case 'save':
+        pickFolderDialog({ title: t('f_save_to_title'), confirm: t('f_save_here'), onPick: async (dest) => {
+          const res = await api('POST', '/recordings/save', { names, dest });
+          sel.clear(); toast(t('rec_saved_toast_n', { count: res.done.length }) + (res.failed.length ? ' · ' + t('f_failed', { count: res.failed.length }) : ''), res.failed.length > 0); refresh(); update();
+        } }); break;
       case 'del': {
-        const hasSaved = items.some((r) => r.saved);
-        if (!confirm(t('confirm_delete_many', { count: names.length, size: fmtSize(items.reduce((a, r) => a + r.size, 0)) }) + (hasSaved && !savedMode ? '' : hasSaved ? '\n\n' + t('confirm_delete_saved') : ''))) return;
+        if (!confirm(t('confirm_delete_many', { count: names.length, size: fmtSize(items.reduce((a, r) => a + r.size, 0)) }))) return;
         const res = await api('POST', '/recordings/delete', { names });
         sel.clear();
         toast(t('rec_deleted_n', { count: res.deleted.length }) + (res.failed.length ? ' · ' + t('rec_delete_failed', { count: res.failed.length }) : ''), res.failed.length > 0);
@@ -690,7 +694,7 @@ function recordingsView(savedMode, sub) {
 
   const update = async () => {
     const all = await api('GET', '/recordings');
-    recs = all.filter((r) => !!r.saved === !!savedMode);
+    recs = all;
     const sig = JSON.stringify(recs);
     const names = new Set(recs.map((r) => r.name));
     for (const n of [...sel]) if (!names.has(n)) sel.delete(n); // files that vanished
@@ -701,25 +705,33 @@ function recordingsView(savedMode, sub) {
   return { update: () => { renderJobsBadge(); return update(); } };
 }
 
+const encPath = (p) => p.split('/').map(enc).join('/');
+/* a ref is "name.mp4" (recording) or "saved/<path>" (file manager) */
+const refUrl = (ref, kind) => ref.startsWith('saved/') ? `api/files/${kind}/${encPath(ref.slice(6))}` : `api/recordings/${enc(ref)}/${kind}`;
+const refConvert = (ref) => ref.startsWith('saved/') ? api('POST', '/files/convert', { path: ref.slice(6) }) : api('POST', `/recordings/${enc(ref)}/convert`);
+
 function playerModal(rec) {
   const note = !NATIVE.includes(rec.ext);
+  const ref = rec.ref || rec.name;
   const m = openModal({
-    title: rec.name, wide: true,
-    body: `<video controls autoplay src="api/recordings/${enc(rec.name)}/stream"></video>
+    title: rec.label || rec.name, wide: true,
+    body: `<video controls autoplay src="${refUrl(ref, 'stream')}"></video>
       <div class="result" id="pnote" ${note ? '' : 'hidden'}>${esc(t('rec_not_native'))}</div>`,
     footer: `${note ? `<button class="btn" id="pconv">${esc(t('rec_convert'))}</button>` : ''}
-      <a class="btn" href="api/recordings/${enc(rec.name)}/download" download>⬇ ${esc(t('download'))}</a><button class="btn" data-close>${esc(t('close'))}</button>`,
+      <a class="btn" href="${refUrl(ref, 'download')}" download>⬇ ${esc(t('download'))}</a><button class="btn" data-close>${esc(t('close'))}</button>`,
     onClose: () => { const v = $('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } },
   });
   $('video', m).onerror = () => { $('#pnote', m).hidden = false; };
   const c = $('#pconv', m);
-  if (c) c.onclick = guard(async () => { await api('POST', `/recordings/${enc(rec.name)}/convert`); closeModal(); refresh(); });
+  if (c) c.onclick = guard(async () => { await refConvert(ref); closeModal(); refresh(); });
 }
 
 function trimModal(rec) {
+  const ref = rec.ref || rec.name;
+  let dest = null; // null = next to the original, otherwise a folder of Saved
   const m = openModal({
-    title: `${t('trim_title')}: ${rec.name}`, wide: true,
-    body: `<video controls preload="metadata" src="api/recordings/${enc(rec.name)}/stream"></video>
+    title: `${t('trim_title')}: ${rec.label || rec.name}`, wide: true,
+    body: `<video controls preload="metadata" src="${refUrl(ref, 'stream')}"></video>
       <div class="result" id="tnote" hidden>${esc(t('rec_not_native'))}</div>
       <div class="timeline" id="tl"><div class="track"></div><div class="sel"></div><div class="head"></div>
         <input type="range" id="rin" min="0" max="1" step="0.01" value="0"><input type="range" id="rout" min="0" max="1" step="0.01" value="1"></div>
@@ -732,7 +744,9 @@ function trimModal(rec) {
       <div class="muted small">${esc(t('trim_duration'))}: <b id="tdur">–</b></div>
       <div class="field"><span class="lbl">${esc(t('trim_mode'))}</span>
         <label class="check"><input type="radio" name="tmode" value="fast" checked> ${esc(t('trim_fast'))}</label>
-        <label class="check"><input type="radio" name="tmode" value="accurate"> ${esc(t('trim_accurate'))}</label></div>`,
+        <label class="check"><input type="radio" name="tmode" value="accurate"> ${esc(t('trim_accurate'))}</label></div>
+      <div class="field"><span class="lbl">${esc(t('f_trim_dest'))}</span>
+        <div class="row destrow"><span class="fname grow" id="tdest"></span><button class="btn sm" id="tpick">${esc(t('f_trim_pick'))}</button><button class="btn sm" id="treset" hidden>${esc(t('f_trim_same'))}</button></div></div>`,
     footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="texp" disabled>✂ ${esc(t('trim_export'))}</button>`,
     onClose: () => { const v = $('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } },
   });
@@ -770,11 +784,324 @@ function trimModal(rec) {
     const r = e.currentTarget.getBoundingClientRect();
     v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur;
   });
+  const paintDest = () => {
+    $('#tdest', m).textContent = dest === null ? t('f_trim_dest_same') : '📁 ' + t('f_root') + (dest ? ' / ' + dest.split('/').join(' / ') : '');
+    $('#treset', m).hidden = dest === null;
+  };
+  paintDest();
+  $('#tpick', m).onclick = () => pickFolderDialog({ title: t('f_trim_dest'), confirm: t('f_trim_here'), start: dest || '', onPick: (d) => { dest = d; paintDest(); } });
+  $('#treset', m).onclick = () => { dest = null; paintDest(); };
   $('#texp', m).onclick = guard(async () => {
     const mode = m.querySelector('input[name=tmode]:checked').value;
-    await api('POST', `/recordings/${enc(rec.name)}/trim`, { start: a, end: b, mode });
-    closeModal(); toast(t('trim_started')); refresh();
+    const body = { start: a, end: b, mode };
+    if (dest !== null) body.dest = dest;
+    if (ref.startsWith('saved/')) await api('POST', '/files/trim', { ...body, path: ref.slice(6) });
+    else await api('POST', `/recordings/${enc(ref)}/trim`, body);
+    closeModal(); toast(t(dest !== null ? 'f_clip_started_saved' : 'trim_started')); refresh();
   });
+}
+
+/* ------------------------------------------------- Saved: file manager */
+const fileIcon = (e) => (e.dir ? '📁' : e.media ? '🎬' : /^(zip|rar|7z|tar|gz)$/.test(e.ext) ? '🗜' : /^(png|jpe?g|gif|webp)$/.test(e.ext) ? '🖼' : /^(txt|md|log|srt|vtt|json)$/.test(e.ext) ? '📝' : '📄');
+const fmDefaults = { q: '', sort: 'name' };
+const fmPrefs = { ...fmDefaults };
+
+/* Folder picker layered above whatever dialog is open. onPick(dest) gets a path ('' = root). */
+function pickFolderDialog({ title, confirm: confirmLabel, start = '', exclude = [], onPick }) {
+  let cur = start;
+  let folders = [];
+  const root = document.createElement('div');
+  root.className = 'overlay picker';
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><header><span>${esc(title)}</span><button class="btn sm" data-x>✕</button></header>
+    <div class="body"><div class="pk-list" id="pk-list"></div></div>
+    <footer><button class="btn" id="pk-new">📁+ ${esc(t('f_new_folder'))}</button><span class="grow"></span>
+      <button class="btn" data-x>${esc(t('cancel'))}</button><button class="btn primary" id="pk-ok">${esc(confirmLabel)}</button></footer></div>`;
+  document.body.append(root);
+  const close = () => { window.removeEventListener('keydown', onKey, true); root.remove(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  window.addEventListener('keydown', onKey, true);
+  $$('[data-x]', root).forEach((b) => (b.onclick = close));
+  const blocked = (p) => exclude.some((x) => p === x || p.startsWith(x + '/'));
+  const paint = () => {
+    const rows = [{ path: '', name: t('f_root'), depth: 0 }, ...folders.map((f) => ({ ...f, depth: f.depth + 1 }))];
+    $('#pk-list', root).innerHTML = rows.map((f) => `<button class="pk-row${f.path === cur ? ' on' : ''}" style="padding-left:${10 + f.depth * 18}px" data-p="${esc(f.path)}" ${blocked(f.path) ? 'disabled' : ''}>${f.path === '' ? '🗄' : '📁'} ${esc(f.name)}</button>`).join('');
+  };
+  const load = async () => { folders = (await api('GET', '/files/tree')).folders; if (cur && !folders.some((f) => f.path === cur)) cur = ''; paint(); };
+  $('#pk-list', root).onclick = (e) => { const b = e.target.closest('[data-p]'); if (b && !b.disabled) { cur = b.dataset.p; paint(); } };
+  $('#pk-new', root).onclick = guard(async () => {
+    const name = window.prompt(t('f_folder_name'));
+    if (!name) return;
+    const r = await api('POST', '/files/mkdir', { path: cur, name });
+    cur = r.path; await load();
+  });
+  $('#pk-ok', root).onclick = guard(async () => { const p = cur; close(); await onPick(p); });
+  load().catch((e) => { toast(e.message, true); close(); });
+}
+
+function filesView() {
+  const hashPath = () => new URLSearchParams(location.hash.split('?')[1] || '').get('p') || '';
+  const path = hashPath().replace(/^\/+|\/+$/g, '');
+  const here = (p) => `#/saved${p ? '?p=' + enc(p) : ''}`;
+  let listing = { entries: [], files: 0, folders: 0, size: 0 };
+  const sel = new Set();
+  let lastSig = '';
+  let dragPaths = null;
+  let busyUpload = false;
+
+  $('#view').innerHTML = `
+    <div class="fm-top"><div class="crumbs" id="crumbs"></div>
+      <div class="fm-tools row">
+        <input type="search" id="fq" class="grow" placeholder="${esc(t('f_search'))}" value="${esc(fmPrefs.q)}">
+        <select id="fso">${['name', 'date_desc', 'date_asc', 'size'].map((k) => `<option value="${k}" ${fmPrefs.sort === k ? 'selected' : ''}>${esc(t('sort_' + k))}</option>`).join('')}</select>
+        <button class="btn" id="fnew">📁+ ${esc(t('f_new_folder'))}</button>
+        <button class="btn primary" id="fup">⬆ ${esc(t('f_upload'))}</button><input type="file" id="ffile" multiple hidden>
+      </div></div>
+    <div id="fprog"></div>
+    <div id="ftbl" class="fm-list"></div>
+    <div class="muted small" id="fsum" style="margin-top:8px"></div>
+    <div id="fbulk" class="bulkbar" hidden></div>`;
+
+  const ref = (p) => 'saved/' + p;
+  const byPath = () => new Map(listing.entries.map((e) => [e.path, e]));
+  const shown = () => {
+    const q = fmPrefs.q.toLowerCase();
+    const rows = listing.entries.filter((e) => !q || e.name.toLowerCase().includes(q) || (e.streamer || '').toLowerCase().includes(q));
+    const when = (e) => new Date(e.dir ? e.mod_time : e.started).getTime();
+    const cmp = {
+      name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+      date_desc: (a, b) => when(b) - when(a),
+      date_asc: (a, b) => when(a) - when(b),
+      size: (a, b) => b.size - a.size,
+    }[fmPrefs.sort];
+    return rows.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : cmp(a, b)));
+  };
+  const selEntries = () => { const m = byPath(); return [...sel].map((p) => m.get(p)).filter(Boolean); };
+
+  const renderCrumbs = () => {
+    const segs = path ? path.split('/') : [];
+    let acc = '';
+    $('#crumbs').innerHTML = `<a data-drop="" href="${here('')}">🗄 ${esc(t('f_root'))}</a>` + segs.map((s) => {
+      acc = acc ? acc + '/' + s : s;
+      return `<span class="sep">›</span><a data-drop="${esc(acc)}" href="${here(acc)}">${esc(s)}</a>`;
+    }).join('');
+  };
+
+  const rowHtml = (e) => {
+    const on = sel.has(e.path);
+    const meta = e.dir ? esc(t('f_items', { count: e.items || 0 }))
+      : `${e.streamer ? `${esc(e.streamer)} ${platformBadge(e.platform)} · ` : ''}${fmtSize(e.size)} · ${new Date(e.media ? e.started : e.mod_time).toLocaleString()}`;
+    const dl = e.dir ? `api/files/zip?path=${enc(e.path)}` : `api/files/download/${encPath(e.path)}`;
+    return `<div class="fm-row${on ? ' selected' : ''}" draggable="true" data-p="${esc(e.path)}" ${e.dir ? 'data-drop="' + esc(e.path) + '"' : ''}>
+      <input type="checkbox" data-sel="${esc(e.path)}" aria-label="${esc(t('rec_select'))}" ${on ? 'checked' : ''}>
+      <button class="fm-name" data-open="${esc(e.path)}"><span class="fm-ic">${fileIcon(e)}</span><span class="nm">${esc(e.name)}</span></button>
+      <span class="fm-meta muted small">${meta}</span>
+      <span class="actions fm-act">
+        ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>` : ''}
+        <button class="btn sm" data-a="ren" data-p="${esc(e.path)}" title="${esc(t('f_rename'))}">✎</button>
+        <button class="btn sm" data-a="mv" data-p="${esc(e.path)}" title="${esc(t('f_move'))}">⇄</button>
+        <a class="btn sm" href="${dl}" download title="${esc(e.dir ? t('f_zip') : t('download'))}">⬇</a>
+        <button class="btn sm danger" data-a="del" data-p="${esc(e.path)}" title="${esc(t('delete'))}">🗑</button>
+      </span></div>`;
+  };
+
+  const render = () => {
+    const rows = shown();
+    const allOn = rows.length > 0 && rows.every((e) => sel.has(e.path));
+    $('#ftbl').innerHTML = rows.length
+      ? `<div class="fm-row fm-headrow"><input type="checkbox" id="fall" ${allOn ? 'checked' : ''} aria-label="${esc(t('rec_select_all'))}"><span class="muted small">${esc(t('col_name'))}</span></div>` + rows.map(rowHtml).join('')
+      : `<div class="card"><div class="empty">${esc(fmPrefs.q ? t('rec_none') : t('f_empty'))}</div></div>`;
+    $('#fsum').textContent = t('f_summary', { folders: listing.folders, files: listing.files, size: fmtSize(listing.size) });
+    renderCrumbs(); renderBulk();
+  };
+
+  const renderBulk = () => {
+    const items = selEntries();
+    const bar = $('#fbulk');
+    bar.hidden = items.length === 0;
+    if (!items.length) { bar.innerHTML = ''; return; }
+    const media = items.filter((e) => e.media);
+    const allMedia = media.length === items.length;
+    const total = items.reduce((a, e) => a + e.size, 0);
+    bar.innerHTML = `<span class="bulk-info"><b>${esc(t('rec_n_selected', { count: items.length }))}</b>${total ? ' · ' + fmtSize(total) : ''}</span><span class="grow"></span>
+      <button class="btn sm" data-b="mv">⇄ ${esc(t('f_move'))}</button>
+      <button class="btn sm" data-b="cp">⧉ ${esc(t('f_copy'))}</button>
+      ${allMedia && media.length > 1 ? `<button class="btn sm" data-b="merge">⛓ ${esc(t('rec_merge'))}</button>` : ''}
+      ${allMedia ? `<button class="btn sm" data-b="compress">🗜 ${esc(t('rec_compress'))}</button><button class="btn sm" data-b="restore">↩ ${esc(t('f_to_rec'))}</button>` : ''}
+      <button class="btn sm" data-b="zip">🗜 ${esc(t('f_zip'))}</button>
+      <button class="btn sm danger" data-b="del">🗑 ${esc(t('delete'))}</button>
+      <button class="btn sm" data-b="clear">✕ ${esc(t('rec_clear_sel'))}</button>`;
+  };
+
+  const load = async () => {
+    try { listing = await api('GET', '/files?path=' + enc(path)); } catch (e) {
+      if (path) { location.hash = here(''); return; }
+      throw e;
+    }
+    for (const p of [...sel]) if (!listing.entries.some((e) => e.path === p)) sel.delete(p);
+    const sig = JSON.stringify(listing) + fmPrefs.q + fmPrefs.sort;
+    if (sig !== lastSig && !dragPaths) { lastSig = sig; render(); }
+  };
+  const reload = async () => { lastSig = ''; await load(); refresh(); };
+
+  const report = (res, okKey) => {
+    const n = res.done.length;
+    toast(t(okKey, { count: n }) + (res.failed.length ? ' · ' + t('f_failed', { count: res.failed.length }) + ': ' + res.failed[0].error : ''), res.failed.length > 0 && n === 0);
+  };
+  const transfer = guard(async (paths, dest, copy) => {
+    report(await api('POST', copy ? '/files/copy' : '/files/move', { paths, dest }), copy ? 'f_copied' : 'f_moved');
+    sel.clear(); await reload();
+  });
+  const pickAndTransfer = (paths, copy) => {
+    const dirs = paths.filter((p) => byPath().get(p)?.dir);
+    pickFolderDialog({ title: t(copy ? 'f_copy_to' : 'f_move_to'), confirm: t(copy ? 'f_copy_here' : 'f_move_here'), start: path, exclude: copy ? [] : dirs, onPick: (d) => transfer(paths, d, copy) });
+  };
+  const remove = guard(async (paths) => {
+    const items = paths.map((p) => byPath().get(p)).filter(Boolean);
+    const msg = items.length === 1 ? t('f_delete_one', { name: items[0].name }) : t('f_delete_many', { count: items.length, size: fmtSize(items.reduce((a, e) => a + e.size, 0)) });
+    if (!confirm(msg + (items.some((e) => e.dir) ? '\n\n' + t('f_delete_folder_warn') : ''))) return;
+    report(await api('POST', '/files/delete', { paths }), 'f_deleted');
+    sel.clear(); await reload();
+  });
+  const nameDialog = (title, value, okLabel, onOk, selectStem) => {
+    const m = openModal({ title, body: `<div class="field"><input type="text" id="fnm" value="${esc(value)}" maxlength="255" autocomplete="off"></div>`,
+      footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="fnm-ok">${esc(okLabel)}</button>` });
+    const inp = $('#fnm', m);
+    const go = guard(async () => { await onOk(inp.value.trim()); closeModal(); });
+    $('#fnm-ok', m).onclick = go;
+    inp.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+    inp.focus();
+    const dot = selectStem ? value.lastIndexOf('.') : -1;
+    inp.setSelectionRange(0, dot > 0 ? dot : value.length);
+  };
+
+  /* uploads: one request per file with a progress bar */
+  const upload = async (files, dest) => {
+    files = [...files].filter((f) => f.size > 0);
+    if (!files.length || busyUpload) return;
+    busyUpload = true;
+    let ok = 0;
+    for (const [i, f] of files.entries()) {
+      const bar = $('#fprog');
+      const paint = (pct) => { if (bar) bar.innerHTML = `<div class="card fm-up"><div class="small">${esc(t('f_uploading', { name: f.name, n: i + 1, total: files.length }))}</div><div class="progress"><i style="width:${pct}%"></i></div></div>`; };
+      paint(0);
+      try {
+        await new Promise((resolve, reject) => {
+          const x = new window.XMLHttpRequest();
+          x.open('POST', `api/files/upload?path=${enc(dest)}&name=${enc(f.name)}`);
+          x.upload.onprogress = (e) => { if (e.lengthComputable) paint(Math.round((e.loaded / e.total) * 100)); };
+          x.onload = () => {
+            if (x.status === 401) { location.href = 'login.html'; return; }
+            if (x.status < 300) resolve(); else { let m = x.statusText; try { m = JSON.parse(x.responseText).error || m; } catch { /* ignore */ } reject(new Error(f.name + ': ' + m)); }
+          };
+          x.onerror = () => reject(new Error(f.name + ': network error'));
+          x.send(f);
+        });
+        ok++;
+      } catch (e) { toast(e.message, true); }
+    }
+    busyUpload = false;
+    if ($('#fprog')) $('#fprog').innerHTML = '';
+    if (ok) toast(t('f_uploaded', { count: ok }));
+    if ($('#ftbl')) await reload();
+  };
+
+  /* ---- events */
+  $('#fq').oninput = (e) => { fmPrefs.q = e.target.value; render(); };
+  $('#fso').onchange = (e) => { fmPrefs.sort = e.target.value; render(); };
+  $('#fnew').onclick = () => nameDialog(t('f_new_folder'), '', t('f_create'), async (name) => {
+    await api('POST', '/files/mkdir', { path, name }); toast(t('f_folder_created')); await reload();
+  });
+  $('#fup').onclick = () => $('#ffile').click();
+  $('#ffile').onchange = (e) => { upload(e.target.files, path); e.target.value = ''; };
+
+  $('#ftbl').addEventListener('change', (e) => {
+    const cb = e.target;
+    if (cb.id === 'fall') { shown().forEach((x) => (cb.checked ? sel.add(x.path) : sel.delete(x.path))); render(); }
+    else if (cb.dataset.sel !== undefined) { cb.checked ? sel.add(cb.dataset.sel) : sel.delete(cb.dataset.sel); render(); }
+  });
+  $('#ftbl').addEventListener('click', guard(async (e) => {
+    const open = e.target.closest('[data-open]');
+    const b = e.target.closest('[data-a]');
+    const m = byPath();
+    if (open) {
+      const en = m.get(open.dataset.open);
+      if (!en) return;
+      if (en.dir) location.hash = here(en.path);
+      else if (en.media) playerModal({ ref: ref(en.path), label: en.name, ext: en.ext });
+      else window.open(`api/files/download/${encPath(en.path)}`, '_blank', 'noopener');
+      return;
+    }
+    if (!b) return;
+    const en = m.get(b.dataset.p);
+    if (!en) return;
+    switch (b.dataset.a) {
+      case 'play': playerModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
+      case 'trim': trimModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
+      case 'ren': nameDialog(t('f_rename'), en.name, t('f_rename'), async (name) => {
+        if (name === en.name) return;
+        await api('POST', '/files/rename', { path: en.path, name }); await reload();
+      }, !en.dir); break;
+      case 'mv': pickAndTransfer([en.path], false); break;
+      case 'del': remove([en.path]); break;
+    }
+  }));
+
+  $('#fbulk').addEventListener('click', guard(async (e) => {
+    const b = e.target.closest('[data-b]');
+    if (!b) return;
+    const items = selEntries();
+    const paths = items.map((x) => x.path);
+    const asRecs = () => items.map((x) => ({ name: ref(x.path), label: x.name, started: x.started, ext: x.ext, streamer: x.streamer, size: x.size }));
+    const done = () => { sel.clear(); reload(); };
+    switch (b.dataset.b) {
+      case 'clear': sel.clear(); render(); break;
+      case 'mv': pickAndTransfer(paths, false); break;
+      case 'cp': pickAndTransfer(paths, true); break;
+      case 'del': remove(paths); break;
+      case 'merge': mergeDialog(asRecs(), done); break;
+      case 'compress': compressDialog(asRecs(), done); break;
+      case 'restore': report(await api('POST', '/files/restore', { paths }), 'f_restored'); sel.clear(); await reload(); break;
+      case 'zip': { const a = document.createElement('a'); a.href = 'api/files/zip?' + paths.map((p) => 'path=' + enc(p)).join('&'); a.download = ''; document.body.append(a); a.click(); a.remove(); break; }
+    }
+  }));
+
+  /* ---- drag & drop: rows / breadcrumbs as targets for moves, any folder or the list for uploads */
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  const dropTarget = (e) => e.target.closest('[data-drop]');
+  const view = $('#view');
+  view.addEventListener('dragstart', (e) => {
+    const row = e.target.closest?.('.fm-row[data-p]');
+    if (!row) return;
+    dragPaths = sel.has(row.dataset.p) ? [...sel] : [row.dataset.p];
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData('text/plain', dragPaths.join('\n'));
+  });
+  view.addEventListener('dragend', () => { dragPaths = null; $$('.dropping').forEach((x) => x.classList.remove('dropping')); });
+  view.addEventListener('dragover', (e) => {
+    if (!dragPaths && !hasFiles(e)) return;
+    e.preventDefault();
+    $$('.dropping').forEach((x) => x.classList.remove('dropping'));
+    const tg = dropTarget(e);
+    const ok = tg && !(dragPaths && dragPaths.some((p) => tg.dataset.drop === p || tg.dataset.drop.startsWith(p + '/')));
+    (ok ? tg : $('#ftbl')).classList.add('dropping');
+    e.dataTransfer.dropEffect = dragPaths ? 'move' : 'copy';
+  });
+  view.addEventListener('dragleave', (e) => { if (!view.contains(e.relatedTarget)) $$('.dropping').forEach((x) => x.classList.remove('dropping')); });
+  view.addEventListener('drop', (e) => {
+    if (!dragPaths && !hasFiles(e)) return;
+    e.preventDefault();
+    $$('.dropping').forEach((x) => x.classList.remove('dropping'));
+    const tg = dropTarget(e);
+    const dest = tg ? tg.dataset.drop : path;
+    if (dragPaths) {
+      const paths = dragPaths; dragPaths = null;
+      if (tg && !paths.some((p) => dest === p || dest.startsWith(p + '/'))) transfer(paths, dest, e.altKey || e.ctrlKey);
+    } else upload(e.dataTransfer.files, dest);
+  });
+
+  render();
+  load().catch(() => {});
+  return { update: load };
 }
 
 /* ------------------------------------------------------ settings view */
@@ -1372,7 +1699,7 @@ function notificationsView() {
 }
 
 /* -------------------------------------------------------------- router */
-const views = { channels: channelsView, recordings: (a) => recordingsView(false, a), saved: () => recordingsView(true), settings: settingsView, notifications: notificationsView };
+const views = { channels: channelsView, recordings: (a) => recordingsView(a), saved: filesView, settings: settingsView, notifications: notificationsView };
 function route() {
   const m = location.hash.match(/^#\/(\w+)(?:\/(\w+))?/) || [];
   const name = m[1];

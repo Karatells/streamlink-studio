@@ -1,10 +1,13 @@
 package main
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,12 +25,19 @@ var metricHelp = map[string]string{
 type libStats struct {
 	files, saved int
 	bytes        int64
+	savedBytes   int64
 	at           time.Time
 }
 
 type libCache struct {
 	mu sync.Mutex
 	v  libStats
+}
+
+func (c *libCache) invalidate() {
+	c.mu.Lock()
+	c.v.at = time.Time{}
+	c.mu.Unlock()
 }
 
 // library scans the recordings directory at most every 30 seconds.
@@ -46,11 +56,26 @@ func (m *Manager) library() libStats {
 		if fi, err := e.Info(); err == nil {
 			v.files++
 			v.bytes += fi.Size()
-			if m.meta.isSaved(e.Name()) {
-				v.saved++
-			}
 		}
 	}
+	_ = filepath.WalkDir(m.cfg.SavedDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") && p != m.cfg.SavedDir {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type().IsRegular() {
+			if fi, err := d.Info(); err == nil {
+				v.saved++
+				v.savedBytes += fi.Size()
+			}
+		}
+		return nil
+	})
 	m.lib.v = v
 	return v
 }
@@ -144,7 +169,8 @@ func (a *API) metrics(w http.ResponseWriter, r *http.Request) {
 
 	lib := m.library()
 	p.sample("streamlink_studio_library_files", "gauge", "Recording files on disk.", "", float64(lib.files))
-	p.sample("streamlink_studio_library_saved_files", "gauge", "Files in the Saved tab.", "", float64(lib.saved))
+	p.sample("streamlink_studio_library_saved_files", "gauge", "Files in the Saved file manager.", "", float64(lib.saved))
+	p.sample("streamlink_studio_library_saved_bytes", "gauge", "Total size of the Saved file manager.", "", float64(lib.savedBytes))
 	p.sample("streamlink_studio_library_bytes", "gauge", "Total size of recording files.", "", float64(lib.bytes))
 	if d := statDisk(m.cfg.RecDir); d != nil {
 		p.sample("streamlink_studio_disk_total_bytes", "gauge", "Size of the recordings file system.", "", float64(d.Total))

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -216,9 +217,16 @@ func (t *Telegram) onCallback(s Settings, cb *tgCallback) {
 			t.answer(cb.ID, t.tr(s, "tg_file_expired"))
 			return
 		}
-		t.a.m.meta.setSaved([]string{name}, !t.a.m.meta.isSaved(name))
-		t.answer(cb.ID, "")
-		show(t.fileCard(s, chat, arg, ""))
+		res, err := t.a.m.SaveRecordings([]string{name}, "")
+		if err == nil && len(res.Failed) > 0 {
+			err = errors.New(res.Failed[0].Error)
+		}
+		if err != nil {
+			t.answer(cb.ID, err.Error())
+			return
+		}
+		t.answer(cb.ID, t.tr(s, "tg_file_saved"))
+		show(t.viewRecordings(s, chat, "", 0, false))
 	case "nt", "nta", "ntn":
 		if !control() {
 			return
@@ -547,15 +555,11 @@ func (t *Telegram) viewRecordings(s Settings, chat int64, filter string, page in
 	var row []tgBtn
 	for i := page * tgPageSize; i < len(items) && i < (page+1)*tgPageSize; i++ {
 		r := items[i]
-		star := ""
-		if r.Saved {
-			star = "⭐ "
-		}
 		rc := ""
 		if r.Recording {
 			rc = "🔴 "
 		}
-		fmt.Fprintf(&b, "%d. %s%s%s\n    %s · %s · %s\n", i-page*tgPageSize+1, rc, star, esc(r.Streamer), esc(fmtBytes(r.Size)), esc(tgTime(r.Started)), esc(r.Ext))
+		fmt.Fprintf(&b, "%d. %s%s%s\n    %s · %s · %s\n", i-page*tgPageSize+1, rc, "", esc(r.Streamer), esc(fmtBytes(r.Size)), esc(tgTime(r.Started)), esc(r.Ext))
 		row = append(row, tgBtn{T: itoa(i - page*tgPageSize + 1), D: "rf:" + itoa(i)})
 		if len(row) == 4 {
 			k, row = append(k, row), nil
@@ -600,18 +604,12 @@ func (t *Telegram) fileCard(s Settings, chat int64, idx, note string) (string, k
 	if info.Title != "" {
 		fmt.Fprintf(&b, "📝 %s\n", esc(info.Title))
 	}
-	if info.Saved {
-		b.WriteString("⭐ " + esc(t.tr(s, "tg_file_saved")) + "\n")
-	}
 	if info.Recording {
 		b.WriteString("🔴 " + esc(t.tr(s, "tg_file_busy")) + "\n")
 	}
 	var k kbd
 	if s.TelegramControl && !info.Recording {
 		save := t.tr(s, "tg_btn_save")
-		if info.Saved {
-			save = t.tr(s, "tg_btn_unsave")
-		}
 		k = append(k, []tgBtn{{T: save, D: "fs:" + idx}, {T: t.tr(s, "tg_btn_delete"), D: "fd:" + idx}})
 	}
 	t.mu.Lock()
