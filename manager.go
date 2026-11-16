@@ -44,6 +44,7 @@ type Rec struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	stopped   bool
+	chat      *chatRecorder
 }
 
 type Runtime struct {
@@ -614,6 +615,7 @@ func (m *Manager) StartRecording(id string) error {
 	m.meta.set([]string{tmp, final}, RecMeta{ChannelID: ch.ID, Streamer: streamerName(ch), Platform: plugin,
 		Title: title, Quality: quality, Started: rec.Started})
 
+	rec.chat = m.startChat(ch, rec)
 	m.mu.Lock()
 	rt = m.rtLocked(id)
 	rt.rec = rec
@@ -641,6 +643,9 @@ func (m *Manager) finishRecording(ch Channel, rec *Rec, werr error, output strin
 		size = fi.Size()
 	}
 	log.Printf("[%s] recording finished (%d bytes, err=%v)", streamerName(ch), size, werr)
+	if rec.chat != nil {
+		rec.chat.stop(ch, size > 0)
+	}
 	switch {
 	case rec.stopped:
 		m.cnt.Inc("streamlink_studio_recordings_finished_total", "result", "stopped")

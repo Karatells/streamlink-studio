@@ -263,6 +263,7 @@ type FileEntry struct {
 	Platform string    `json:"platform,omitempty"`
 	Title    string    `json:"title,omitempty"`
 	Started  time.Time `json:"started"`
+	Chat     []string  `json:"chat,omitempty"`
 }
 
 type FileListing struct {
@@ -322,9 +323,18 @@ func (m *Manager) ListSaved(rel string) (*FileListing, error) {
 	byID := channelIndex(channels)
 	metas := m.meta.snapshot()
 	out := &FileListing{Path: rel, Entries: []FileEntry{}}
+	stems := map[string]bool{} // chat files belong to their video and are not listed on their own
+	for _, e := range es {
+		if !e.IsDir() && isMediaFile(e.Name()) {
+			stems[chatStem(e.Name())] = true
+		}
+	}
 	for _, e := range es {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") || e.Type()&fs.ModeSymlink != 0 {
+			continue
+		}
+		if !e.IsDir() && isChatSidecar(name) && stems[strings.TrimSuffix(name[:strings.LastIndex(name, ".chat.")], "")] {
 			continue
 		}
 		info, err := e.Info()
@@ -351,6 +361,7 @@ func (m *Manager) ListSaved(rel string) (*FileListing, error) {
 			fe.Media = isMediaFile(name)
 			if fe.Media {
 				fe.Streamer, fe.Platform, fe.Title, fe.Started = mediaInfo(savedPrefix+p, name, info.ModTime(), metas, channels, byID)
+				fe.Chat = chatFiles(abs, name)
 			}
 			out.Files++
 			out.Size += fe.Size
@@ -473,6 +484,9 @@ func (m *Manager) RenameSaved(rel, newName string) (string, error) {
 	if err := os.Rename(src, dst); err != nil {
 		return "", err
 	}
+	if !fi.IsDir() {
+		moveChat(filepath.Dir(src), filepath.Base(src), filepath.Dir(dst), newName, false)
+	}
 	newRel := newName
 	if i := strings.LastIndex(rel, "/"); i >= 0 {
 		newRel = rel[:i+1] + newName
@@ -558,11 +572,17 @@ func (m *Manager) transferSaved(paths []string, dest string, cp bool) (*OpResult
 			}
 			if err == nil {
 				m.copyMeta(fi.IsDir(), savedPrefix+rel, savedPrefix+newRel)
+				if !fi.IsDir() {
+					moveChat(filepath.Dir(src), filepath.Base(src), dstDir, name, true)
+				}
 			}
 		} else {
 			err = moveEntry(src, dst)
 			if err == nil {
 				m.rekey(fi.IsDir(), savedPrefix+rel, savedPrefix+newRel)
+				if !fi.IsDir() {
+					moveChat(filepath.Dir(src), filepath.Base(src), dstDir, name, false)
+				}
 			}
 		}
 		if err != nil {
@@ -594,8 +614,11 @@ func (m *Manager) DeleteSaved(paths []string) *OpResult {
 			err = errBad("invalid path")
 		}
 		if err == nil {
-			if exists(abs) {
+			if fi, e := os.Lstat(abs); e == nil {
 				err = os.RemoveAll(abs)
+				if err == nil && !fi.IsDir() {
+					removeChat(filepath.Dir(abs), filepath.Base(abs))
+				}
 			}
 		}
 		if err != nil {
@@ -643,6 +666,7 @@ func (m *Manager) SaveRecordings(names []string, dest string) (*OpResult, error)
 					rel = dest + "/" + name
 				}
 				if err = moveEntry(src, filepath.Join(dstDir, name)); err == nil {
+					moveChat(m.cfg.RecDir, n, dstDir, name, false)
 					m.meta.rekey(n, savedPrefix+rel)
 					res.Done = append(res.Done, MoveResult{n, rel})
 					continue
@@ -675,6 +699,7 @@ func (m *Manager) RestoreRecordings(paths []string) *OpResult {
 		if err == nil {
 			name := uniqueName(m.cfg.RecDir, filepath.Base(src))
 			if err = moveEntry(src, filepath.Join(m.cfg.RecDir, name)); err == nil {
+				moveChat(filepath.Dir(src), filepath.Base(src), m.cfg.RecDir, name, false)
 				m.meta.rekey(savedPrefix+rel, name)
 				res.Done = append(res.Done, MoveResult{rel, name})
 				continue

@@ -70,7 +70,9 @@ func (m *Manager) library() libStats {
 		}
 		if d.Type().IsRegular() {
 			if fi, err := d.Info(); err == nil {
-				v.saved++
+				if !isChatSidecar(d.Name()) {
+					v.saved++
+				}
 				v.savedBytes += fi.Size()
 			}
 		}

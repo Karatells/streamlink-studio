@@ -32,6 +32,7 @@ type Channel struct {
 	Email            string    `json:"email"`
 	Password         string    `json:"password"`
 	ExtraArgs        string    `json:"extra_args"`
+	Chat             string    `json:"chat"` // "" = global default, "on", "off" (Twitch only)
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -61,6 +62,10 @@ type Settings struct {
 	TelegramControl bool     `json:"telegram_control"` // false = read-only bot
 	TelegramTypes   []string `json:"telegram_types"`   // nil = all notification types
 	TelegramLang    string   `json:"telegram_lang"`
+
+	// Chat capture while recording (Twitch).
+	ChatAll     bool     `json:"chat_all"`     // capture chat of every Twitch channel by default
+	ChatFormats []string `json:"chat_formats"` // txt, jsonl, srt; nil = ["txt"]
 
 	// FTP / FTPS server for the Saved file manager.
 	FTPOn         bool   `json:"ftp_on"`

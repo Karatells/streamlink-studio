@@ -250,6 +250,7 @@ function channelsView() {
           <span class="muted">${esc(c.recording_quality || c.quality || settings.default_quality || 'best')}</span>
           ${c.auth_active ? `<span class="badge ok">🔑 ${esc(t('auth_active'))}</span>` : ''}
           <span class="muted small">${esc(t('recording_for'))} ${fmtDur((Date.now() - new Date(c.recording_since)) / 1000)}</span>
+          ${c.chat_messages != null ? `<span class="badge" title="${esc(t('chat_capturing'))}">💬 ${c.chat_messages}</span>` : ''}
           <span class="grow"></span>
           <button class="btn sm danger" data-act="stop" data-id="${c.id}">■ ${esc(t('stop'))}</button></div>`).join('')
       : `<div class="muted">${esc(t('no_active'))}</div>`;
@@ -307,6 +308,9 @@ function channelModal(ch) {
         <div class="field"><label>${esc(t('ch_interval'))}</label><input type="number" id="f-interval" min="0" value="${ch.check_interval || 0}" title="${esc(t('ch_interval_hint'))}"></div>
         <div class="field"><label>${esc(t('proxy'))}</label><input type="text" id="f-proxy" value="${esc(ch.proxy)}" placeholder="http://user:pass@host:port"></div>
       </div>
+      <div class="field"><label>${esc(t('chat_ch'))}</label>
+        <select id="f-chat">${[['', t('chat_ch_default')], ['on', t('chat_ch_on')], ['off', t('chat_ch_off')]].map(([k, l]) => `<option value="${k}" ${(ch.chat || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <span class="muted small">${esc(t('chat_ch_hint'))}</span></div>
       <div class="field"><label>${esc(t('ch_template'))}</label><input type="text" id="f-tpl" value="${esc(ch.filename_template)}" placeholder="${esc(settings.default_template || '')}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>
       <div class="field"><label>${esc(t('headers'))} (${esc(t('headers_hint'))})</label><textarea id="f-headers">${esc(ch.headers)}</textarea></div>
       <div class="two">
@@ -351,7 +355,7 @@ function channelModal(ch) {
       auth_mode: m.querySelector('input[name=authmode]:checked').value,
       disable_ads: $('#f-ads', m).checked, low_latency: $('#f-ll', m).checked,
       check_interval: parseInt(val('#f-interval'), 10) || 0, proxy: val('#f-proxy'),
-      filename_template: val('#f-tpl'), headers: val('#f-headers'), email: val('#f-email'), extra_args: val('#f-extra'),
+      chat: val('#f-chat'), filename_template: val('#f-tpl'), headers: val('#f-headers'), email: val('#f-email'), extra_args: val('#f-extra'),
     };
     if (val('#f-token')) b.oauth_token = val('#f-token'); // secrets only when changed
     if (val('#f-pass')) b.password = val('#f-pass');
@@ -543,6 +547,7 @@ function recordingsView(sub) {
     <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
     <td><div class="actions">
       <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
+      ${(r.chat || []).length ? `<button class="btn sm" data-a="chat" data-n="${esc(r.name)}" title="${esc(t('chat_open'))}">💬</button>` : ''}
       ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
       ${r.recording ? '' : `<button class="btn sm" data-a="trim" data-n="${esc(r.name)}">✂ ${esc(t('rec_trim'))}</button>`}
       ${r.recording ? '' : `<button class="btn sm" data-a="save" data-n="${esc(r.name)}">☆ ${esc(t('rec_save'))}</button>`}
@@ -653,6 +658,7 @@ function recordingsView(sub) {
       case 'toggle': collapsed.has(b.dataset.g) ? collapsed.delete(b.dataset.g) : collapsed.add(b.dataset.g); render(); break;
       case 'streamer': setStreamer(filter.streamer === name ? '' : name); break;
       case 'play': playerModal(rec); break;
+      case 'chat': chatDialog(name, rec.chat, (f, dl) => `api/recordings/${enc(name)}/chat/${f}${dl ? '?dl=1' : ''}`); break;
       case 'trim': trimModal(rec); break;
       case 'conv': await refConvert(name); refresh(); break;
       case 'save':
@@ -709,6 +715,31 @@ const encPath = (p) => p.split('/').map(enc).join('/');
 /* a ref is "name.mp4" (recording) or "saved/<path>" (file manager) */
 const refUrl = (ref, kind) => ref.startsWith('saved/') ? `api/files/${kind}/${encPath(ref.slice(6))}` : `api/recordings/${enc(ref)}/${kind}`;
 const refConvert = (ref) => ref.startsWith('saved/') ? api('POST', '/files/convert', { path: ref.slice(6) }) : api('POST', `/recordings/${enc(ref)}/convert`);
+
+/* Chat viewer: preview (searchable) and downloads of the saved chat of a video.
+   urlFor(fmt, dl) builds the URL of one chat file. */
+function chatDialog(title, formats, urlFor) {
+  const first = ['txt', 'srt', 'jsonl'].find((f) => formats.includes(f)) || formats[0];
+  const m = openModal({
+    title: `💬 ${title}`, wide: true,
+    body: `<div class="row" style="margin-bottom:8px"><input type="search" id="chat-q" class="grow" placeholder="${esc(t('chat_search'))}"><span class="muted small" id="chat-n"></span></div>
+      <pre class="chat-view" id="chat-pre">…</pre>`,
+    footer: `${formats.map((f) => `<a class="btn" href="${urlFor(f, true)}" download>⬇ .${esc(f)}</a>`).join('')}<button class="btn" data-close>${esc(t('close'))}</button>`,
+  });
+  let lines = [];
+  const paint = () => {
+    const q = $('#chat-q', m).value.trim().toLowerCase();
+    const shown = q ? lines.filter((l) => l.toLowerCase().includes(q)) : lines;
+    const cap = 4000;
+    $('#chat-pre', m).textContent = shown.slice(0, cap).join('\n') || t('chat_empty');
+    $('#chat-n', m).textContent = shown.length > cap ? t('chat_first', { count: cap }) : t('chat_lines', { count: shown.length });
+  };
+  $('#chat-q', m).oninput = paint;
+  fetch(urlFor(first, false), { headers: { Range: 'bytes=0-1048575' }, credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(r.statusText))))
+    .then((txt) => { lines = txt.split('\n').filter((l) => l && !l.startsWith('#')); paint(); })
+    .catch((e) => { $('#chat-pre', m).textContent = e.message; });
+}
 
 function playerModal(rec) {
   const note = !NATIVE.includes(rec.ext);
@@ -896,7 +927,7 @@ function filesView() {
       <button class="fm-name" data-open="${esc(e.path)}"><span class="fm-ic">${fileIcon(e)}</span><span class="nm">${esc(e.name)}</span></button>
       <span class="fm-meta muted small">${meta}</span>
       <span class="actions fm-act">
-        ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>` : ''}
+        ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>${(e.chat || []).length ? `<button class="btn sm" data-a="chat" data-p="${esc(e.path)}" title="${esc(t('chat_open'))}">💬</button>` : ''}` : ''}
         <button class="btn sm" data-a="ren" data-p="${esc(e.path)}" title="${esc(t('f_rename'))}">✎</button>
         <button class="btn sm" data-a="mv" data-p="${esc(e.path)}" title="${esc(t('f_move'))}">⇄</button>
         <a class="btn sm" href="${dl}" download title="${esc(e.dir ? t('f_zip') : t('download'))}">⬇</a>
@@ -1036,6 +1067,7 @@ function filesView() {
     if (!en) return;
     switch (b.dataset.a) {
       case 'play': playerModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
+      case 'chat': chatDialog(en.name, en.chat, (f, dl) => `api/files/chat/${f}/${encPath(en.path)}${dl ? '?dl=1' : ''}`); break;
       case 'trim': trimModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
       case 'ren': nameDialog(t('f_rename'), en.name, t('f_rename'), async (name) => {
         if (name === en.name) return;
@@ -1147,6 +1179,12 @@ function settingsView(tab) {
         <div class="field"><label>${esc(t('set_def_template'))}</label><input type="text" id="s-tpl" value="${esc(settings.default_template)}"><span class="muted small">${esc(t('ch_template_hint'))}</span></div>
         <label class="check"><input type="checkbox" id="s-remux" ${settings.remux_after ? 'checked' : ''}> ${esc(t('set_remux'))}</label>
       </fieldset>
+      <fieldset class="card"><legend>💬 ${esc(t('chat_settings'))}</legend>
+        <div class="muted small" style="margin-bottom:8px">${esc(t('chat_settings_hint'))}</div>
+        <label class="check"><input type="checkbox" id="s-chatall" ${settings.chat_all ? 'checked' : ''}> ${esc(t('chat_all'))}</label>
+        <div class="field" style="margin-top:10px"><label>${esc(t('chat_formats'))}</label>
+          <div id="s-chatfmt">${['txt', 'jsonl', 'srt'].map((f) => `<label class="check"><input type="checkbox" data-f="${f}" ${(settings.chat_formats || ['txt']).includes(f) ? 'checked' : ''}> <span><b>.${f}</b> — ${esc(t('chat_fmt_' + f))}</span></label>`).join('')}</div></div>
+      </fieldset>
       <fieldset class="card"><legend>${esc(t('cmp_settings'))}</legend>
         <div class="muted small" style="margin-bottom:8px">${esc(t('cmp_settings_hint'))}</div>
         <div class="two">
@@ -1158,7 +1196,7 @@ function settingsView(tab) {
           <div class="field"><label>${esc(t('cmp_auto_days'))}</label><input type="number" min="0" max="3650" id="s-cdays" value="${settings.compress_auto_days || 0}"><span class="muted small">${esc(t('cmp_auto_hint'))}</span></div>
         </div>
       </fieldset>${saveBar}`;
-      save(() => ({ compress_codec: v('#s-ccodec'), compress_level: v('#s-clevel'), compress_height: parseInt(v('#s-cheight'), 10) || 0, compress_auto_days: parseInt(v('#s-cdays'), 10) || 0, default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60, default_template: v('#s-tpl'), remux_after: $('#s-remux').checked }));
+      save(() => ({ chat_all: $('#s-chatall').checked, chat_formats: $$('#s-chatfmt [data-f]').filter((c) => c.checked).map((c) => c.dataset.f), compress_codec: v('#s-ccodec'), compress_level: v('#s-clevel'), compress_height: parseInt(v('#s-cheight'), 10) || 0, compress_auto_days: parseInt(v('#s-cdays'), 10) || 0, default_quality: v('#s-q'), default_interval: parseInt(v('#s-iv'), 10) || 60, default_template: v('#s-tpl'), remux_after: $('#s-remux').checked }));
     } else if (tab === 'auth') {
       body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_global_auth'))}</legend>
         <div class="field"><label>${esc(t('set_twitch_token'))}</label>

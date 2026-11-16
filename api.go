@@ -73,6 +73,7 @@ type ChannelView struct {
 	HasPassword      bool   `json:"has_password"`
 	HasCookies       bool   `json:"has_cookies"`
 	AuthActive       bool   `json:"auth_active"`
+	Chat             string `json:"chat"`
 
 	Status           string     `json:"status"`
 	Error            string     `json:"error,omitempty"`
@@ -81,6 +82,7 @@ type ChannelView struct {
 	RecordingSince   *time.Time `json:"recording_since,omitempty"`
 	RecordingQuality string     `json:"recording_quality,omitempty"`
 	RecordingFile    string     `json:"recording_file,omitempty"`
+	ChatMessages     *int64     `json:"chat_messages,omitempty"` // set while chat is being captured
 }
 
 func (a *API) view(ch Channel) ChannelView {
@@ -90,7 +92,7 @@ func (a *API) view(ch Channel) ChannelView {
 		FilenameTemplate: ch.FilenameTemplate, AuthMode: ch.AuthMode, DisableAds: ch.DisableAds,
 		LowLatency: ch.LowLatency, Proxy: ch.Proxy, Headers: ch.Headers, Email: ch.Email,
 		ExtraArgs: ch.ExtraArgs, HasToken: ch.OAuthToken != "", HasPassword: ch.Password != "",
-		HasCookies: ch.HasCookies, AuthActive: a.m.authActive(ch), Status: StatusOffline,
+		HasCookies: ch.HasCookies, AuthActive: a.m.authActive(ch), Status: StatusOffline, Chat: ch.Chat,
 	}
 	if v.Plugin == "" {
 		v.Plugin = detectPlatform(ch.URL)
@@ -107,6 +109,10 @@ func (a *API) view(ch Channel) ChannelView {
 			v.RecordingSince = &t
 			v.RecordingFile = rt.rec.TmpName
 			v.RecordingQuality = rt.rec.Quality
+			if rt.rec.chat != nil {
+				n := rt.rec.chat.Count()
+				v.ChatMessages = &n
+			}
 		}
 	}
 	a.m.mu.Unlock()
@@ -139,6 +145,9 @@ type SettingsView struct {
 	TelegramTypes    []string `json:"telegram_types"`
 	TelegramLang     string   `json:"telegram_lang"`
 
+	ChatAll     bool     `json:"chat_all"`
+	ChatFormats []string `json:"chat_formats"`
+
 	FTPOn         bool   `json:"ftp_on"`
 	FTPPort       int    `json:"ftp_port"`
 	FTPUser       string `json:"ftp_user"`
@@ -167,7 +176,11 @@ func settingsView(s Settings) SettingsView {
 	if port == 0 {
 		port = 2121
 	}
-	return SettingsView{FTPOn: s.FTPOn, FTPPort: port, FTPUser: s.FTPUser, HasFTPPass: s.FTPPass != "", FTPReadOnly: s.FTPReadOnly,
+	cf := append([]string{}, s.ChatFormats...)
+	if s.ChatFormats == nil {
+		cf = []string{"txt"}
+	}
+	return SettingsView{ChatAll: s.ChatAll, ChatFormats: cf, FTPOn: s.FTPOn, FTPPort: port, FTPUser: s.FTPUser, HasFTPPass: s.FTPPass != "", FTPReadOnly: s.FTPReadOnly,
 		FTPRequireTLS: s.FTPRequireTLS, FTPPassive: s.FTPPassive, FTPPublicIP: s.FTPPublicIP, TelegramOn: s.TelegramOn, HasTelegramToken: s.TelegramToken != "", TelegramUsers: append([]int64{}, s.TelegramUsers...),
 		TelegramControl: s.TelegramControl, TelegramTypes: tt, TelegramLang: s.TelegramLang, HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
 		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
@@ -190,6 +203,7 @@ type RecInfo struct {
 	Title     string    `json:"title,omitempty"`
 	Ext       string    `json:"ext"`
 	Recording bool      `json:"recording"`
+	Chat      []string  `json:"chat,omitempty"` // formats of the saved chat
 }
 
 // listRecordings builds the library. Streamer / platform / start time come from
@@ -212,6 +226,7 @@ func (a *API) listRecordings() []RecInfo {
 		ri := RecInfo{Name: e.Name(), Size: fi.Size(), ModTime: fi.ModTime(),
 			Ext: strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name())), "."), Recording: a.m.ActiveFile(e.Name())}
 		ri.Streamer, ri.Platform, ri.Title, ri.Started = mediaInfo(e.Name(), e.Name(), fi.ModTime(), metas, channels, byID)
+		ri.Chat = chatFiles(a.m.cfg.RecDir, e.Name())
 		out = append(out, ri)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
@@ -266,6 +281,7 @@ type ChannelInput struct {
 	Email            *string `json:"email"`
 	Password         *string `json:"password"` // nil = keep, "" = clear
 	ExtraArgs        *string `json:"extra_args"`
+	Chat             *string `json:"chat"`
 }
 
 func applyInput(ch *Channel, in ChannelInput) error {
@@ -295,6 +311,14 @@ func applyInput(ch *Channel, in ChannelInput) error {
 	str(&ch.Proxy, in.Proxy)
 	str(&ch.Email, in.Email)
 	str(&ch.ExtraArgs, in.ExtraArgs)
+	if in.Chat != nil {
+		switch *in.Chat {
+		case "", "on", "off":
+			ch.Chat = *in.Chat
+		default:
+			return errBad("chat must be empty, \"on\" or \"off\"")
+		}
+	}
 	if in.Headers != nil {
 		ch.Headers = strings.TrimSpace(*in.Headers)
 	}
@@ -548,6 +572,8 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		TelegramControl *bool     `json:"telegram_control"`
 		TelegramTypes   *[]string `json:"telegram_types"`
 		TelegramLang    *string   `json:"telegram_lang"`
+		ChatAll         *bool     `json:"chat_all"`
+		ChatFormats     *[]string `json:"chat_formats"`
 		FTPOn           *bool     `json:"ftp_on"`
 		FTPPort         *int      `json:"ftp_port"`
 		FTPUser         *string   `json:"ftp_user"`
@@ -714,6 +740,20 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errBad("the Telegram bot needs a token"))
 		return
 	}
+	if in.ChatAll != nil {
+		s.ChatAll = *in.ChatAll
+	}
+	if in.ChatFormats != nil {
+		cf := []string{}
+		for _, f := range *in.ChatFormats {
+			if !validChatFormat(f) {
+				writeErr(w, errBad("unknown chat format: "+f))
+				return
+			}
+			cf = append(cf, f)
+		}
+		s.ChatFormats = cf
+	}
 	if in.FTPPort != nil {
 		if *in.FTPPort < 1 || *in.FTPPort > 65535 {
 			writeErr(w, errBad("FTP port must be 1-65535"))
@@ -867,6 +907,7 @@ func (a *API) deleteRec(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	removeChat(a.m.cfg.RecDir, filepath.Base(p))
 	a.m.meta.remove(filepath.Base(p))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -921,6 +962,7 @@ func (a *API) bulkDeleteRecs(w http.ResponseWriter, r *http.Request) {
 			failed = append(failed, n)
 			continue
 		}
+		removeChat(a.m.cfg.RecDir, n)
 		deleted = append(deleted, n)
 	}
 	a.m.meta.remove(deleted...)
@@ -1102,6 +1144,8 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("DELETE /api/recordings/{name}", a.deleteRec)
 	mux.HandleFunc("POST /api/recordings/{name}/convert", a.convertRec)
 	mux.HandleFunc("POST /api/recordings/{name}/trim", a.trimRec)
+	mux.HandleFunc("GET /api/recordings/{name}/chat/{fmt}", a.recChat)
+	mux.HandleFunc("GET /api/files/chat/{fmt}/{path...}", a.savedChat)
 	mux.HandleFunc("GET /api/files", a.listFiles)
 	mux.HandleFunc("GET /api/files/tree", a.filesTree)
 	mux.HandleFunc("GET /api/files/zip", a.filesZip)
