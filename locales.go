@@ -68,7 +68,8 @@ func (l *Locales) Fill(lang, key string, vars map[string]string) string {
 func (l *Locales) Notification(lang string, n Notification) (title, msg string) {
 	p := n.Params
 	vars := map[string]string{"channel": p["channel"], "title": p["title"], "error": p["error"],
-		"input": p["input"], "output": p["output"], "version": p["version"]}
+		"input": p["input"], "output": p["output"], "version": p["version"],
+		"count": p["count"], "size": p["size"], "free": p["free"], "limit": p["limit"]}
 	if p["kind"] != "" {
 		vars["kind"] = l.Tr(lang, "job_"+p["kind"])
 	}

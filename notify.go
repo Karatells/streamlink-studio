@@ -12,7 +12,7 @@ import (
 )
 
 // Notification types. The UI builds the (translated) text from the type and params.
-var notifyTypes = []string{"stream_live", "stream_ended", "rec_failed", "auth_error", "job_started", "job_done", "job_failed", "update_available"}
+var notifyTypes = []string{"stream_live", "stream_ended", "rec_failed", "auth_error", "job_started", "job_done", "job_failed", "update_available", "disk_low", "cleanup_done"}
 
 const (
 	maxNotifications = 300
@@ -77,7 +77,7 @@ func levelFor(typ string) string {
 		return "success"
 	case "rec_failed", "job_failed":
 		return "error"
-	case "auth_error":
+	case "auth_error", "disk_low":
 		return "warn"
 	}
 	return "info"

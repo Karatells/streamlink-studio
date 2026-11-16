@@ -372,7 +372,7 @@ func (t *Telegram) Enqueue(n Notification) {
 }
 
 var notifEmoji = map[string]string{"stream_live": "🔴", "stream_ended": "⏹", "rec_failed": "⚠️", "auth_error": "🔑",
-	"job_started": "⚙️", "job_done": "✅", "job_failed": "❌", "update_available": "⬆️"}
+	"job_started": "⚙️", "job_done": "✅", "job_failed": "❌", "update_available": "⬆️", "disk_low": "💾", "cleanup_done": "🧹"}
 
 func (t *Telegram) worker() {
 	for n := range t.q {

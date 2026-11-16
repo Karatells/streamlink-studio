@@ -42,6 +42,15 @@ func (c *Counters) Inc(name string, kv ...string) {
 	c.mu.Unlock()
 }
 
+func (c *Counters) Add(name string, v float64, kv ...string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.m[name+"\x00"+promLabels(kv...)] += v
+	c.mu.Unlock()
+}
+
 func (c *Counters) snapshot() map[string]float64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()

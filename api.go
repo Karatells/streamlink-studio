@@ -148,6 +148,12 @@ type SettingsView struct {
 	ChatAll     bool     `json:"chat_all"`
 	ChatFormats []string `json:"chat_formats"`
 
+	RetainDays    int    `json:"retain_days"`
+	RetainMaxGB   int    `json:"retain_max_gb"`
+	MinFreeGB     int    `json:"min_free_gb"`
+	MinFreeAction string `json:"min_free_action"`
+	RetainAuto    bool   `json:"retain_auto"`
+
 	FTPOn         bool   `json:"ftp_on"`
 	FTPPort       int    `json:"ftp_port"`
 	FTPUser       string `json:"ftp_user"`
@@ -180,7 +186,7 @@ func settingsView(s Settings) SettingsView {
 	if s.ChatFormats == nil {
 		cf = []string{"txt"}
 	}
-	return SettingsView{ChatAll: s.ChatAll, ChatFormats: cf, FTPOn: s.FTPOn, FTPPort: port, FTPUser: s.FTPUser, HasFTPPass: s.FTPPass != "", FTPReadOnly: s.FTPReadOnly,
+	return SettingsView{RetainDays: s.RetainDays, RetainMaxGB: s.RetainMaxGB, MinFreeGB: s.MinFreeGB, MinFreeAction: rulesFrom(s).Action, RetainAuto: s.RetainAuto, ChatAll: s.ChatAll, ChatFormats: cf, FTPOn: s.FTPOn, FTPPort: port, FTPUser: s.FTPUser, HasFTPPass: s.FTPPass != "", FTPReadOnly: s.FTPReadOnly,
 		FTPRequireTLS: s.FTPRequireTLS, FTPPassive: s.FTPPassive, FTPPublicIP: s.FTPPublicIP, TelegramOn: s.TelegramOn, HasTelegramToken: s.TelegramToken != "", TelegramUsers: append([]int64{}, s.TelegramUsers...),
 		TelegramControl: s.TelegramControl, TelegramTypes: tt, TelegramLang: s.TelegramLang, HasTwitchToken: s.TwitchToken != "", HasCookies: s.HasCookies, Proxy: s.Proxy,
 		DefaultQuality: s.DefaultQuality, DefaultInterval: s.DefaultInterval, DefaultTemplate: s.DefaultTemplate,
@@ -572,6 +578,11 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		TelegramControl *bool     `json:"telegram_control"`
 		TelegramTypes   *[]string `json:"telegram_types"`
 		TelegramLang    *string   `json:"telegram_lang"`
+		RetainDays      *int      `json:"retain_days"`
+		RetainMaxGB     *int      `json:"retain_max_gb"`
+		MinFreeGB       *int      `json:"min_free_gb"`
+		MinFreeAction   *string   `json:"min_free_action"`
+		RetainAuto      *bool     `json:"retain_auto"`
 		ChatAll         *bool     `json:"chat_all"`
 		ChatFormats     *[]string `json:"chat_formats"`
 		FTPOn           *bool     `json:"ftp_on"`
@@ -740,6 +751,30 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errBad("the Telegram bot needs a token"))
 		return
 	}
+	for _, f := range []struct {
+		dst *int
+		src *int
+		max int
+		nm  string
+	}{{&s.RetainDays, in.RetainDays, 36500, "days"}, {&s.RetainMaxGB, in.RetainMaxGB, 1_000_000, "size limit"}, {&s.MinFreeGB, in.MinFreeGB, 1_000_000, "free space"}} {
+		if f.src != nil {
+			if *f.src < 0 || *f.src > f.max {
+				writeErr(w, errBad("invalid value: "+f.nm))
+				return
+			}
+			*f.dst = *f.src
+		}
+	}
+	if in.MinFreeAction != nil {
+		if *in.MinFreeAction != "warn" && *in.MinFreeAction != "clean" {
+			writeErr(w, errBad("free space action must be warn or clean"))
+			return
+		}
+		s.MinFreeAction = *in.MinFreeAction
+	}
+	if in.RetainAuto != nil {
+		s.RetainAuto = *in.RetainAuto
+	}
 	if in.ChatAll != nil {
 		s.ChatAll = *in.ChatAll
 	}
@@ -903,12 +938,10 @@ func (a *API) deleteRec(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, &httpError{409, "file is being recorded"})
 		return
 	}
-	if err := os.Remove(p); err != nil {
+	if err := a.m.removeRecording(filepath.Base(p)); err != nil {
 		writeErr(w, err)
 		return
 	}
-	removeChat(a.m.cfg.RecDir, filepath.Base(p))
-	a.m.meta.remove(filepath.Base(p))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -958,14 +991,12 @@ func (a *API) bulkDeleteRecs(w http.ResponseWriter, r *http.Request) {
 			failed = append(failed, n)
 			continue
 		}
-		if err := os.Remove(filepath.Join(a.m.cfg.RecDir, n)); err != nil && !os.IsNotExist(err) {
+		if err := a.m.removeRecording(n); err != nil {
 			failed = append(failed, n)
 			continue
 		}
-		removeChat(a.m.cfg.RecDir, n)
 		deleted = append(deleted, n)
 	}
-	a.m.meta.remove(deleted...)
 	writeJSON(w, 200, map[string]any{"deleted": deleted, "failed": failed})
 }
 
@@ -1101,6 +1132,8 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/notifications", a.listNotifications)
 	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
 	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
+	mux.HandleFunc("GET /api/cleanup", a.cleanupPreview)
+	mux.HandleFunc("POST /api/cleanup/run", a.cleanupRun)
 	mux.HandleFunc("GET /api/ftp", a.ftpStatus)
 	mux.HandleFunc("GET /api/telegram", a.telegramStatus)
 	mux.HandleFunc("POST /api/telegram/test", a.telegramTest)

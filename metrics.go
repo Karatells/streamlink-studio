@@ -20,6 +20,9 @@ var metricHelp = map[string]string{
 	"streamlink_studio_recordings_finished_total": "Recordings finished by result (ok, stopped, interrupted, failed).",
 	"streamlink_studio_jobs_total":                "Finished processing jobs by type and result.",
 	"streamlink_studio_notifications_total":       "Notification events by type (including muted ones).",
+	"streamlink_studio_chat_messages_total":       "Chat messages saved while recording.",
+	"streamlink_studio_cleanup_files_total":       "Recordings deleted by the storage rules.",
+	"streamlink_studio_cleanup_bytes_total":       "Bytes freed by the storage rules.",
 }
 
 type libStats struct {

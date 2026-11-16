@@ -1137,7 +1137,7 @@ function filesView() {
 }
 
 /* ------------------------------------------------------ settings view */
-const SET_TABS = ['general', 'auth', 'notifications', 'telegram', 'ftp', 'tools', 'stats', 'system', 'log', 'updates'];
+const SET_TABS = ['general', 'auth', 'notifications', 'telegram', 'ftp', 'storage', 'tools', 'stats', 'system', 'log', 'updates'];
 const settingsTabLabel = (k) => t('set_tab_' + k);
 
 function settingsView(tab) {
@@ -1158,6 +1158,7 @@ function settingsView(tab) {
     if (tab === 'notifications') return notificationsTab(body, alive);
     if (tab === 'telegram') return telegramTab(body, alive);
     if (tab === 'ftp') return ftpTab(body, alive);
+    if (tab === 'storage') return storageTab(body, alive);
     if (tab === 'system') return systemTab(body, alive);
     if (tab === 'log') return logTab(body, alive);
     const ver = await api('GET', '/version');
@@ -1244,7 +1245,7 @@ const platformIcon = (name) => (PLATFORM_HUE[String(name).toLowerCase()] !== und
 
 /* Settings → Notifications: Gotify delivery */
 function notificationsTab(body, alive) {
-  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available'];
+  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'disk_low', 'cleanup_done', 'update_available'];
   const sel = new Set(settings.gotify_types || types);
   const fmt = (d) => new Date(d).toLocaleString();
   const gl = settings.gotify_lang || lang;
@@ -1352,8 +1353,58 @@ function ftpTab(body, alive) {
   });
 }
 
+function storageTab(body, alive) {
+  const num = (id) => Math.max(0, parseInt($(id).value, 10) || 0);
+  body.innerHTML = `<fieldset class="card"><legend>${esc(t('set_tab_storage'))}</legend>
+    <div class="muted small" style="margin-bottom:8px">${esc(t('stor_hint'))}</div>
+    <div id="stor-disk" class="muted small"></div>
+    <div class="two" style="margin-top:10px">
+      <div class="field"><label>${esc(t('stor_days'))}</label><input type="number" id="st-days" min="0" value="${settings.retain_days || 0}"><span class="muted small">${esc(t('stor_days_hint'))}</span></div>
+      <div class="field"><label>${esc(t('stor_maxgb'))}</label><input type="number" id="st-max" min="0" value="${settings.retain_max_gb || 0}"><span class="muted small">${esc(t('stor_maxgb_hint'))}</span></div>
+    </div>
+    <div class="two">
+      <div class="field"><label>${esc(t('stor_minfree'))}</label><input type="number" id="st-free" min="0" value="${settings.min_free_gb || 0}"></div>
+      <div class="field"><label>${esc(t('stor_action'))}</label><select id="st-act">
+        <option value="warn" ${settings.min_free_action !== 'clean' ? 'selected' : ''}>${esc(t('stor_act_warn'))}</option>
+        <option value="clean" ${settings.min_free_action === 'clean' ? 'selected' : ''}>${esc(t('stor_act_clean'))}</option></select></div>
+    </div>
+    <label class="check"><input type="checkbox" id="st-auto" ${settings.retain_auto ? 'checked' : ''}> <span>${esc(t('stor_auto'))}<br><span class="muted small">${esc(t('stor_auto_hint'))}</span></span></label>
+  </fieldset>
+  <div class="row"><button class="btn primary" id="st-save">${esc(t('save'))}</button>
+    <button class="btn" id="st-prev">${esc(t('stor_preview'))}</button>
+    <button class="btn danger" id="st-run">${esc(t('stor_run'))}</button></div>
+  <div id="st-plan"></div>`;
+  const q = () => `?days=${num('#st-days')}&max_gb=${num('#st-max')}&min_free_gb=${num('#st-free')}&min_free_action=${$('#st-act').value}`;
+  const disk = (d) => { $('#stor-disk').textContent = d ? t('stor_disk', { free: fmtSize(d.free), total: fmtSize(d.total) }) : ''; };
+  const preview = async () => {
+    const r = await api('GET', '/cleanup' + q());
+    if (alive.stop) return;
+    disk(r.disk);
+    const p = r.plan;
+    if (!p.count) { $('#st-plan').innerHTML = `<div class="card muted">${esc(t('stor_nothing', { count: p.lib_count, size: fmtSize(p.lib_size) }))}</div>`; return; }
+    $('#st-plan').innerHTML = `<div class="card"><div>${esc(t('stor_plan', { count: p.count, size: fmtSize(p.size) }))}</div>
+      <ul class="plist">${p.items.slice(0, 100).map((i) => `<li><span class="name">${esc(i.name)}</span> <span class="muted small">${esc(new Date(i.mod_time).toLocaleDateString())} · ${fmtSize(i.size)} · ${esc(t('stor_why_' + i.reason))}</span></li>`).join('')}</ul>
+      ${p.items.length > 100 ? `<div class="muted small">… +${p.items.length - 100}</div>` : ''}</div>`;
+  };
+  api('GET', '/cleanup').then((r) => !alive.stop && disk(r.disk)).catch(() => {});
+  $('#st-prev').onclick = guard(preview);
+  $('#st-save').onclick = guard(async () => {
+    settings = await api('PUT', '/settings', { retain_days: num('#st-days'), retain_max_gb: num('#st-max'), min_free_gb: num('#st-free'),
+      min_free_action: $('#st-act').value, retain_auto: $('#st-auto').checked });
+    toast(t('saved')); storageTab(body, alive);
+  });
+  $('#st-run').onclick = guard(async () => {
+    if (!confirm(t('stor_run_confirm'))) return;
+    settings = await api('PUT', '/settings', { retain_days: num('#st-days'), retain_max_gb: num('#st-max'), min_free_gb: num('#st-free'),
+      min_free_action: $('#st-act').value, retain_auto: $('#st-auto').checked });
+    const r = await api('POST', '/cleanup/run');
+    toast(t('stor_done', { count: r.deleted, size: fmtSize(r.freed) }));
+    storageTab(body, alive);
+  });
+}
+
 function telegramTab(body, alive) {
-  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available'];
+  const types = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'disk_low', 'cleanup_done', 'update_available'];
   const sel = new Set(settings.telegram_types || types);
   const gl = settings.telegram_lang || lang;
   const fmt = (d) => new Date(d).toLocaleString();
@@ -1695,15 +1746,15 @@ function updatesTab(body, alive) {
 }
 
 /* ------------------------------------------------- notifications page */
-const NOTIF_ICON = { stream_live: '🔴', stream_ended: '⏹', rec_failed: '⚠️', auth_error: '🔑', job_started: '⚙️', job_done: '✅', job_failed: '❌', update_available: '⬆️' };
-const NOTIF_GROUP = { stream_live: 'streams', stream_ended: 'streams', job_started: 'jobs', job_done: 'jobs', job_failed: 'jobs', rec_failed: 'system', auth_error: 'system', update_available: 'system' };
+const NOTIF_ICON = { stream_live: '🔴', stream_ended: '⏹', rec_failed: '⚠️', auth_error: '🔑', job_started: '⚙️', job_done: '✅', job_failed: '❌', disk_low: '💾', cleanup_done: '🧹', update_available: '⬆️' };
+const NOTIF_GROUP = { stream_live: 'streams', stream_ended: 'streams', job_started: 'jobs', job_done: 'jobs', job_failed: 'jobs', rec_failed: 'system', auth_error: 'system', disk_low: 'system', cleanup_done: 'system', update_available: 'system' };
 const notifIcon = (n) => NOTIF_ICON[n.type] || '🔔';
 
 function notifText(n) {
   const p = n.params || {};
   return t('ntf_' + n.type, {
     channel: p.channel || '', title: p.title || '', error: p.error || '', input: p.input || '', output: p.output || '',
-    kind: p.kind ? t('job_' + p.kind) : '', version: p.version || '', channel_type: p.channel ? t('upd_ch_' + p.channel) : '',
+    kind: p.kind ? t('job_' + p.kind) : '', count: p.count || '', size: p.size || '', free: p.free || '', limit: p.limit || '', version: p.version || '', channel_type: p.channel ? t('upd_ch_' + p.channel) : '',
   }) + (n.type === 'stream_live' && p.recording ? ' · ' + t('ntf_recording_started') : '');
 }
 
@@ -1712,6 +1763,7 @@ function notifLink(n) {
     case 'job_started': case 'job_failed': return '#/recordings/jobs';
     case 'job_done': return '#/recordings';
     case 'update_available': return '#/settings/updates';
+    case 'disk_low': case 'cleanup_done': return '#/settings/storage';
     default: return '#/channels';
   }
 }
@@ -1749,7 +1801,7 @@ function notificationsView() {
   };
   const renderPrefs = () => {
     const off = new Set(settings.notify_off || []);
-    $('#n-prefs-body').innerHTML = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'update_available']
+    $('#n-prefs-body').innerHTML = ['stream_live', 'stream_ended', 'rec_failed', 'auth_error', 'job_started', 'job_done', 'job_failed', 'disk_low', 'cleanup_done', 'update_available']
       .map((k) => `<label class="check"><input type="checkbox" data-type="${k}" ${off.has(k) ? '' : 'checked'}> ${notifIcon({ type: k })} ${esc(t('ntf_type_' + k))}</label>`).join('');
   };
   const scheduleRead = () => {

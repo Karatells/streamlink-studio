@@ -110,6 +110,7 @@ func main() {
 	api.ftp = NewFTP(api)
 	go api.ftp.Run(ctx)
 	go m.RunAutoCompress(ctx)
+	go m.RunStorage(ctx)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {

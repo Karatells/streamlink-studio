@@ -63,6 +63,13 @@ type Settings struct {
 	TelegramTypes   []string `json:"telegram_types"`   // nil = all notification types
 	TelegramLang    string   `json:"telegram_lang"`
 
+	// Storage rules for the Recordings list (0 = off).
+	RetainDays    int    `json:"retain_days"`     // delete recordings older than this
+	RetainMaxGB   int    `json:"retain_max_gb"`   // keep the folder below this size, oldest first
+	MinFreeGB     int    `json:"min_free_gb"`     // warn (or clean) when free space is lower
+	MinFreeAction string `json:"min_free_action"` // "warn" | "clean"
+	RetainAuto    bool   `json:"retain_auto"`     // apply the rules automatically
+
 	// Chat capture while recording (Twitch).
 	ChatAll     bool     `json:"chat_all"`     // capture chat of every Twitch channel by default
 	ChatFormats []string `json:"chat_formats"` // txt, jsonl, srt; nil = ["txt"]
