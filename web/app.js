@@ -548,6 +548,7 @@ function recordingsView(sub) {
     <td><div class="actions">
       <button class="btn sm" data-a="play" data-n="${esc(r.name)}">▶ ${esc(t('rec_play'))}</button>
       ${(r.chat || []).length ? `<button class="btn sm" data-a="chat" data-n="${esc(r.name)}" title="${esc(t('chat_open'))}">💬</button>` : ''}
+      ${(r.chat || []).includes('jsonl') && !r.recording ? `<button class="btn sm" data-a="moments" data-n="${esc(r.name)}" title="${esc(t('mom_title'))}">⚡</button>` : ''}
       ${r.ext !== 'mp4' && !r.recording ? `<button class="btn sm" data-a="conv" data-n="${esc(r.name)}">${esc(t('rec_convert'))}</button>` : ''}
       ${r.recording ? '' : `<button class="btn sm" data-a="trim" data-n="${esc(r.name)}">✂ ${esc(t('rec_trim'))}</button>`}
       ${r.recording ? '' : `<button class="btn sm" data-a="save" data-n="${esc(r.name)}">☆ ${esc(t('rec_save'))}</button>`}
@@ -660,6 +661,7 @@ function recordingsView(sub) {
       case 'play': playerModal(rec); break;
       case 'chat': chatDialog(name, rec.chat, (f, dl) => `api/recordings/${enc(name)}/chat/${f}${dl ? '?dl=1' : ''}`); break;
       case 'trim': trimModal(rec); break;
+      case 'moments': momentsModal(rec); break;
       case 'conv': await refConvert(name); refresh(); break;
       case 'save':
         pickFolderDialog({ title: t('f_save_to_title'), confirm: t('f_save_here'), onPick: async (dest) => {
@@ -869,6 +871,72 @@ function trimModal(rec) {
   });
 }
 
+/* Smart moments: chat-activity bursts suggested as clips */
+function momentsModal(rec) {
+  const ref = rec.ref || rec.name;
+  let dest = 'clips', list = [];
+  const m = openModal({
+    title: `⚡ ${t('mom_title')}: ${rec.label || rec.name}`, wide: true,
+    body: `<video controls preload="metadata" src="${refUrl(ref, 'stream')}"></video>
+      <div class="muted small" style="margin:6px 0">${esc(t('mom_hint'))}</div>
+      <div class="row"><label class="muted small" for="mom-sens">${esc(t('mom_sens'))}</label>
+        <select id="mom-sens"><option value="low">${esc(t('mom_sens_low'))}</option><option value="normal" selected>${esc(t('mom_sens_normal'))}</option><option value="high">${esc(t('mom_sens_high'))}</option></select></div>
+      <div id="mom-list" class="mom-list"><div class="loading muted">${esc(t('loading'))}</div></div>
+      <div class="field"><span class="lbl">${esc(t('trim_mode'))}</span>
+        <label class="check"><input type="radio" name="mmode" value="fast" checked> ${esc(t('trim_fast'))}</label>
+        <label class="check"><input type="radio" name="mmode" value="accurate"> ${esc(t('trim_accurate'))}</label></div>
+      <div class="field"><span class="lbl">${esc(t('f_trim_dest'))}</span>
+        <div class="row destrow"><span class="fname grow" id="mdest"></span><button class="btn sm" id="mpick">${esc(t('f_trim_pick'))}</button><button class="btn sm" id="mreset" hidden>${esc(t('f_trim_same'))}</button></div></div>`,
+    footer: `<button class="btn" data-close>${esc(t('cancel'))}</button><button class="btn primary" id="mgo" disabled>✂ ${esc(t('mom_create'))}</button>`,
+    onClose: () => { const v = $('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } },
+  });
+  const v = $('video', m);
+  const paintDest = () => {
+    $('#mdest', m).textContent = dest === null ? t('f_trim_dest_same') : '📁 ' + t('f_root') + (dest ? ' / ' + dest.split('/').join(' / ') : '');
+    $('#mreset', m).hidden = dest === null;
+  };
+  paintDest();
+  $('#mpick', m).onclick = () => pickFolderDialog({ title: t('f_trim_dest'), confirm: t('f_trim_here'), start: dest || '', onPick: (d) => { dest = d; paintDest(); } });
+  $('#mreset', m).onclick = () => { dest = null; paintDest(); };
+  const paintGo = () => {
+    const n = $$('input[data-mi]:checked', m).length;
+    $('#mgo', m).disabled = n === 0;
+    $('#mgo', m).textContent = `✂ ${t('mom_create')}${n ? ` (${n})` : ''}`;
+  };
+  const load = guard(async () => {
+    const box = $('#mom-list', m);
+    box.innerHTML = `<div class="loading muted">${esc(t('loading'))}</div>`;
+    let r;
+    try { r = await api('GET', `/moments?ref=${enc(ref)}&sens=${$('#mom-sens', m).value}`); } catch (e) {
+      box.innerHTML = `<div class="muted">${esc(e.message)}</div>`; list = []; paintGo(); return;
+    }
+    list = r.moments;
+    box.innerHTML = list.length ? list.map((x, i) => `<label class="mom-row" data-i="${i}">
+        <input type="checkbox" data-mi="${i}" checked>
+        <span class="mom-t"><b>${fmtTime(x.start).slice(0, 8)}</b> – ${fmtTime(x.end).slice(0, 8)} <span class="muted small">(${Math.round(x.end - x.start)} s)</span></span>
+        <span class="muted small">${esc(t('mom_msgs', { count: x.count }))} · ×${x.score}</span>
+        <span class="mom-top">${(x.top || []).map((w) => `<code>${esc(w)}</code>`).join(' ')}</span>
+        <button class="btn sm" type="button" data-play="${i}">▶</button></label>`).join('')
+      : `<div class="muted">${esc(t('mom_none', { count: r.messages }))}</div>`;
+    paintGo();
+  });
+  m.addEventListener('change', (e) => { if (e.target.id === 'mom-sens') load(); else if (e.target.dataset?.mi !== undefined) paintGo(); });
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-play]');
+    if (!b) return;
+    e.preventDefault();
+    v.currentTime = list[+b.dataset.play].start; v.play().catch(() => {});
+  });
+  load();
+  $('#mgo', m).onclick = guard(async () => {
+    const clips = $$('input[data-mi]:checked', m).map((c) => ({ start: list[+c.dataset.mi].start, end: list[+c.dataset.mi].end }));
+    const body = { ref, clips, mode: m.querySelector('input[name=mmode]:checked').value };
+    if (dest !== null) body.dest = dest;
+    await api('POST', '/moments/clip', body);
+    closeModal(); toast(t('mom_started', { count: clips.length })); refresh();
+  });
+}
+
 /* ------------------------------------------------- Saved: file manager */
 const fileIcon = (e) => (e.dir ? '📁' : e.media ? '🎬' : /^(zip|rar|7z|tar|gz)$/.test(e.ext) ? '🗜' : /^(png|jpe?g|gif|webp)$/.test(e.ext) ? '🖼' : /^(txt|md|log|srt|vtt|json)$/.test(e.ext) ? '📝' : '📄');
 const fmDefaults = { q: '', sort: 'name' };
@@ -964,7 +1032,7 @@ function filesView() {
       <button class="fm-name" data-open="${esc(e.path)}">${e.media ? thumbHtml(ref(e.path), fileIcon(e)) : `<span class="fm-ic">${fileIcon(e)}</span>`}<span class="nm">${esc(e.name)}</span></button>
       <span class="fm-meta muted small">${meta}</span>
       <span class="actions fm-act">
-        ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>${(e.chat || []).length ? `<button class="btn sm" data-a="chat" data-p="${esc(e.path)}" title="${esc(t('chat_open'))}">💬</button>` : ''}` : ''}
+        ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>${(e.chat || []).length ? `<button class="btn sm" data-a="chat" data-p="${esc(e.path)}" title="${esc(t('chat_open'))}">💬</button>` : ''}${(e.chat || []).includes('jsonl') ? `<button class="btn sm" data-a="moments" data-p="${esc(e.path)}" title="${esc(t('mom_title'))}">⚡</button>` : ''}` : ''}
         <button class="btn sm" data-a="ren" data-p="${esc(e.path)}" title="${esc(t('f_rename'))}">✎</button>
         <button class="btn sm" data-a="mv" data-p="${esc(e.path)}" title="${esc(t('f_move'))}">⇄</button>
         <a class="btn sm" href="${dl}" download title="${esc(e.dir ? t('f_zip') : t('download'))}">⬇</a>
@@ -1106,6 +1174,7 @@ function filesView() {
       case 'play': playerModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
       case 'chat': chatDialog(en.name, en.chat, (f, dl) => `api/files/chat/${f}/${encPath(en.path)}${dl ? '?dl=1' : ''}`); break;
       case 'trim': trimModal({ ref: ref(en.path), label: en.name, ext: en.ext }); break;
+      case 'moments': momentsModal({ ref: ref(en.path), label: en.name }); break;
       case 'ren': nameDialog(t('f_rename'), en.name, t('f_rename'), async (name) => {
         if (name === en.name) return;
         await api('POST', '/files/rename', { path: en.path, name }); await reload();

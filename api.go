@@ -1133,6 +1133,8 @@ func (a *API) Routes(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/notifications/read", a.readNotifications)
 	mux.HandleFunc("DELETE /api/notifications", a.clearNotifications)
 	mux.HandleFunc("GET /api/thumb", a.thumb)
+	mux.HandleFunc("GET /api/moments", a.moments)
+	mux.HandleFunc("POST /api/moments/clip", a.momentClips)
 	mux.HandleFunc("GET /api/cleanup", a.cleanupPreview)
 	mux.HandleFunc("POST /api/cleanup/run", a.cleanupRun)
 	mux.HandleFunc("GET /api/ftp", a.ftpStatus)

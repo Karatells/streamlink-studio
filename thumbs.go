@@ -51,6 +51,9 @@ func thumbArgs(in, out string, dur float64) []string {
 		at := 0.0
 		if dur > 0 {
 			at = dur * (float64(i) + 0.5) / thumbCount
+			if dur > 3 && at > dur-1 { // the last frame must exist, or ffmpeg writes nothing
+				at = dur - 1
+			}
 		}
 		args = append(args, "-ss", fmt.Sprintf("%.2f", at), "-i", in)
 		fmt.Fprintf(&fc, "[%d:v:0]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,setsar=1[v%d];", i, thumbW, thumbH, thumbW, thumbH, i)
@@ -129,7 +132,13 @@ func (m *Manager) Thumb(ctx context.Context, ref string) (string, error) {
 	rc, cancel := context.WithTimeout(context.Background(), 40*time.Second) // keep rendering even if the client left
 	defer cancel()
 	cmd := exec.CommandContext(rc, m.ffmpegBin(), thumbArgs(in, tmp, m.probeDuration(in))...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		if fi, e := os.Stat(tmp); e != nil || fi.Size() == 0 {
+			err = fmt.Errorf("ffmpeg wrote no frame")
+		}
+	}
+	if err != nil {
 		_ = os.Remove(tmp)
 		if rc.Err() == nil { // ffmpeg itself said no: remember it
 			_ = os.WriteFile(none, []byte(strings.TrimSpace(string(out))), 0o644)

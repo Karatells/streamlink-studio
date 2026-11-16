@@ -568,5 +568,15 @@
   "stor_why_age": "too old",
   "stor_why_quota": "over size limit",
   "stor_why_low_disk": "low disk space",
-  "stor_done": "Deleted {count} recordings, freed {size}"
+  "stor_done": "Deleted {count} recordings, freed {size}",
+  "mom_title": "Smart moments",
+  "mom_hint": "Bursts of chat activity usually mark the best parts of a stream. Pick the ones to cut into clips (▶ jumps to the start).",
+  "mom_sens": "Sensitivity",
+  "mom_sens_low": "Only the biggest",
+  "mom_sens_normal": "Normal",
+  "mom_sens_high": "More moments",
+  "mom_msgs": "{count} messages",
+  "mom_none": "No chat bursts found ({count} messages analysed).",
+  "mom_create": "Create clips",
+  "mom_started": "Cutting {count} clips…"
 }

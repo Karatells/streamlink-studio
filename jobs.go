@@ -229,6 +229,11 @@ func (m *Manager) Convert(ref string) (*Job, error) {
 // streams (cuts on keyframes); "accurate" re-encodes. dest (optional) is a
 // folder of the Saved tree the clip is written to.
 func (m *Manager) Trim(ref string, start, end float64, mode string, dest *string) (*Job, error) {
+	return m.TrimNamed(ref, start, end, mode, dest, "trim")
+}
+
+// TrimNamed is Trim with a custom suffix for the output name (<name>_<label>.mp4).
+func (m *Manager) TrimNamed(ref string, start, end float64, mode string, dest *string, label string) (*Job, error) {
 	in, err := m.srcFile(ref)
 	if err != nil {
 		return nil, err
@@ -242,7 +247,7 @@ func (m *Manager) Trim(ref string, start, end float64, mode string, dest *string
 	}
 	_, name := splitRef(ref)
 	base := strings.TrimSuffix(name, filepath.Ext(name))
-	outName, err := reserveName(dirAbs, base+"_trim.mp4", ".mp4")
+	outName, err := reserveName(dirAbs, base+"_"+label+".mp4", ".mp4")
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +269,10 @@ func (m *Manager) Trim(ref string, start, end float64, mode string, dest *string
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		if mode == "accurate" { // re-encodes share the encoder slot with compression
+			m.enc <- struct{}{}
+			defer func() { <-m.enc }()
+		}
 		_ = m.runFFmpeg(j, args, in, end-start)
 	}()
 	return &snap, nil

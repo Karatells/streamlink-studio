@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -11,12 +12,14 @@ import (
 	"time"
 )
 
-func makeVideo(t *testing.T, path string) {
+func makeVideo(t *testing.T, path string) { makeVideoLen(t, path, 6) }
+
+func makeVideoLen(t *testing.T, path string, secs int) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("no ffmpeg")
 	}
-	out, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10:duration=6",
+	out, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", fmt.Sprintf("testsrc=size=160x90:rate=2:duration=%d", secs),
 		"-pix_fmt", "yuv420p", path).CombinedOutput()
 	if err != nil {
 		t.Fatal(err, string(out))
