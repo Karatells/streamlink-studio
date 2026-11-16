@@ -541,7 +541,7 @@ function recordingsView(sub) {
 
   const rowHtml = (r) => `<tr class="${sel.has(r.name) ? 'selected' : ''}">
     <td class="sel"><input type="checkbox" data-sel="${esc(r.name)}" aria-label="${esc(t('rec_select'))}" ${sel.has(r.name) ? 'checked' : ''} ${selectable(r) ? '' : 'disabled'}></td>
-    <td class="name">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</td>
+    <td class="name"><div class="namebox">${r.recording ? '' : thumbHtml(r.name)}<div class="nm">${esc(r.name)} ${r.recording ? `<span class="badge recording">${esc(t('rec_recording_now'))}</span>` : ''}</div></div></td>
     <td data-label="${esc(t('col_streamer'))}"><button class="nick${filter.streamer === r.streamer ? ' on' : ''}" data-a="streamer" data-n="${esc(r.streamer)}" title="${esc(t('rec_filter_streamer'))}">${esc(r.streamer)}</button>${r.platform ? ` ${platformBadge(r.platform)}` : ''}</td>
     <td class="num" data-label="${esc(t('col_size'))}">${fmtSize(r.size)}</td>
     <td class="num" data-label="${esc(t('col_date'))}">${new Date(r.started).toLocaleString()}</td>
@@ -581,7 +581,7 @@ function recordingsView(sub) {
       cb.indeterminate = n > 0 && n < sels.length;
     });
     $('#sum').textContent = t('rec_total', { count: rows.length, size: fmtSize(rows.reduce((a, r) => a + r.size, 0)) });
-    renderChips(); renderBulk();
+    renderChips(); renderBulk(); hydrateThumbs($('#tbl'));
   };
 
   const renderChips = () => {
@@ -712,6 +712,43 @@ function recordingsView(sub) {
 }
 
 const encPath = (p) => p.split('/').map(enc).join('/');
+/* ---- preview strips: one JPEG with 8 frames, slid under the mouse ---- */
+const THUMB_FRAMES = 8;
+const thumbHtml = (ref, fallback = '🎬') => `<span class="thumb" data-ref="${esc(ref)}"><span class="thumb-ic">${fallback}</span></span>`;
+const thumbIO = 'IntersectionObserver' in window ? new window.IntersectionObserver((es) => {
+  for (const e of es) {
+    if (!e.isIntersecting) continue;
+    thumbIO.unobserve(e.target);
+    loadThumb(e.target);
+  }
+}, { rootMargin: '200px' }) : null;
+function loadThumb(el) {
+  const img = new window.Image();
+  img.onload = () => { el.style.backgroundImage = `url("${img.src}")`; el.classList.add('ready'); };
+  img.onerror = () => el.classList.add('none');
+  img.src = `api/thumb?ref=${enc(el.dataset.ref)}`;
+}
+function hydrateThumbs(root = document) {
+  root.querySelectorAll('.thumb:not([data-h])').forEach((el) => {
+    el.dataset.h = '1';
+    if (thumbIO) thumbIO.observe(el); else loadThumb(el);
+  });
+}
+function scrubThumb(e) {
+  const el = e.target.closest?.('.thumb.ready');
+  if (!el) return;
+  const pt = e.touches ? e.touches[0] : e;
+  const r = el.getBoundingClientRect();
+  const i = Math.max(0, Math.min(THUMB_FRAMES - 1, Math.floor(((pt.clientX - r.left) / r.width) * THUMB_FRAMES)));
+  el.style.backgroundPosition = `${(i / (THUMB_FRAMES - 1)) * 100}% 0`;
+}
+document.addEventListener('mousemove', scrubThumb);
+document.addEventListener('touchmove', scrubThumb, { passive: true });
+document.addEventListener('mouseout', (e) => {
+  const el = e.target.closest?.('.thumb.ready');
+  if (el && !el.contains(e.relatedTarget)) el.style.backgroundPosition = '0 0';
+});
+
 /* a ref is "name.mp4" (recording) or "saved/<path>" (file manager) */
 const refUrl = (ref, kind) => ref.startsWith('saved/') ? `api/files/${kind}/${encPath(ref.slice(6))}` : `api/recordings/${enc(ref)}/${kind}`;
 const refConvert = (ref) => ref.startsWith('saved/') ? api('POST', '/files/convert', { path: ref.slice(6) }) : api('POST', `/recordings/${enc(ref)}/convert`);
@@ -924,7 +961,7 @@ function filesView() {
     const dl = e.dir ? `api/files/zip?path=${enc(e.path)}` : `api/files/download/${encPath(e.path)}`;
     return `<div class="fm-row${on ? ' selected' : ''}" draggable="true" data-p="${esc(e.path)}" ${e.dir ? 'data-drop="' + esc(e.path) + '"' : ''}>
       <input type="checkbox" data-sel="${esc(e.path)}" aria-label="${esc(t('rec_select'))}" ${on ? 'checked' : ''}>
-      <button class="fm-name" data-open="${esc(e.path)}"><span class="fm-ic">${fileIcon(e)}</span><span class="nm">${esc(e.name)}</span></button>
+      <button class="fm-name" data-open="${esc(e.path)}">${e.media ? thumbHtml(ref(e.path), fileIcon(e)) : `<span class="fm-ic">${fileIcon(e)}</span>`}<span class="nm">${esc(e.name)}</span></button>
       <span class="fm-meta muted small">${meta}</span>
       <span class="actions fm-act">
         ${e.media ? `<button class="btn sm" data-a="play" data-p="${esc(e.path)}" title="${esc(t('rec_play'))}">▶</button><button class="btn sm" data-a="trim" data-p="${esc(e.path)}" title="${esc(t('rec_trim'))}">✂</button>${(e.chat || []).length ? `<button class="btn sm" data-a="chat" data-p="${esc(e.path)}" title="${esc(t('chat_open'))}">💬</button>` : ''}` : ''}
@@ -942,7 +979,7 @@ function filesView() {
       ? `<div class="fm-row fm-headrow"><input type="checkbox" id="fall" ${allOn ? 'checked' : ''} aria-label="${esc(t('rec_select_all'))}"><span class="muted small">${esc(t('col_name'))}</span></div>` + rows.map(rowHtml).join('')
       : `<div class="card"><div class="empty">${esc(fmPrefs.q ? t('rec_none') : t('f_empty'))}</div></div>`;
     $('#fsum').textContent = t('f_summary', { folders: listing.folders, files: listing.files, size: fmtSize(listing.size) });
-    renderCrumbs(); renderBulk();
+    renderCrumbs(); renderBulk(); hydrateThumbs($('#ftbl'));
   };
 
   const renderBulk = () => {

@@ -86,6 +86,7 @@ type Manager struct {
 	cnt       *Counters
 	extraSink func(Notification) // Telegram; set once before Run
 	lib       libCache
+	thumbs    *thumbCache
 	lastTick  atomic.Int64 // unix nanos of the last poller tick (health)
 	wg        sync.WaitGroup
 	ctx       context.Context
@@ -93,7 +94,7 @@ type Manager struct {
 
 func NewManager(cfg Config, st *Store) *Manager {
 	ms := openMeta(filepath.Join(cfg.DataDir, "recordings.json"))
-	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms}
+	m := &Manager{cfg: cfg, st: st, rt: map[string]*Runtime{}, meta: ms, thumbs: newThumbCache()}
 	if cfg.SavedDir != "" {
 		_ = ensureDir(cfg.SavedDir)
 		m.MigrateSaved(filepath.Join(cfg.DataDir, "saved.json"))
