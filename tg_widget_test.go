@@ -51,7 +51,7 @@ func TestWidgetStateFitsAndIsPublicSafe(t *testing.T) {
 	for i := 0; i < 80; i++ {
 		_ = api.m.st.PutChannel(Channel{ID: fmt.Sprintf("%012d", i), URL: fmt.Sprintf("https://twitch.tv/some_long_streamer_name_%d", i), OAuthToken: "SECRET-TOKEN", AuthMode: "global"})
 	}
-	data, _, _ := api.tg.widgetData(api.m.st.Settings(), "note", 123)
+	data, _, _ := api.tg.widgetData(api.m.st.Settings(), "note", 123, false)
 	if len(data) > 1024 {
 		t.Fatalf("state is %d bytes", len(data))
 	}
@@ -86,6 +86,48 @@ func TestWidgetDashboardCommand(t *testing.T) {
 	api.tg.handle(msg(111, 111, "private", "/dashboard"))
 	if api.tg.wr.at[111] != 4242 || f.count("deleteMessage") != 0 {
 		t.Log("same message id from the fake server: nothing to delete")
+	}
+}
+
+func TestWidgetRetriesDisplayOnlyWhenQueriesRefused(t *testing.T) {
+	api, f := setupTG(t, true, 111)
+	_ = api.m.st.PutChannel(Channel{ID: "c1", URL: "https://twitch.tv/bob", AuthMode: "global"})
+	f.reject = func(method string, p map[string]any) string {
+		if method == "sendWidget" && p["allow_queries"] == true {
+			return "Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED"
+		}
+		return ""
+	}
+	api.tg.handle(msg(111, 111, "private", "/dashboard"))
+	if f.count("sendWidget") != 2 {
+		t.Fatal(f.count("sendWidget"))
+	}
+	c := f.last("sendWidget")
+	if c.P["allow_queries"] != false || !strings.Contains(c.P["chat_data"].(string), `"nq":1`) {
+		t.Fatalf("%+v", c.P)
+	}
+	if !api.tg.wr.noq[111] {
+		t.Fatal("display-only mode must be remembered")
+	}
+	api.tg.widgetsSync(api.m.st.Settings())
+	if p := f.last("editMessageWidgetData").P; !strings.Contains(p["chat_data"].(string), `"nq":1`) {
+		t.Fatalf("updates must keep the display-only state: %+v", p)
+	}
+	if len(f.sent()) != 0 {
+		t.Fatal("no text fallback expected")
+	}
+
+	// refused either way: the reason is shown together with the plain status
+	f.reject = func(method string, p map[string]any) string {
+		if method == "sendWidget" {
+			return "Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED"
+		}
+		return ""
+	}
+	api.tg.handle(msg(111, 111, "private", "/dashboard"))
+	got := f.lastText()
+	if !strings.Contains(got, "INPUT_MEDIA_WIDGET_NOT_ALLOWED") || !strings.Contains(got, "Streamlink Studio") || strings.Contains(got, "telegram 400") {
+		t.Fatalf("%q", got)
 	}
 }
 

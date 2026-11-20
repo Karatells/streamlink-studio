@@ -39,7 +39,8 @@ type widgetStateT struct {
 	D  [2]float64 `json:"d"`
 	J  [2]int     `json:"j"`
 	RO int        `json:"ro,omitempty"`
-	M  string     `json:"m,omitempty"` // one-off note for the widget that asked
+	NQ int        `json:"nq,omitempty"` // the widget cannot send requests: no buttons
+	M  string     `json:"m,omitempty"`  // one-off note for the widget that asked
 }
 
 func jsonCompact(v any) string {
@@ -61,7 +62,7 @@ func clipRunes(s string, n int) string {
 func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }
 
 // widgetData returns the state; ts and note are left out when zero/empty (change detection).
-func (t *Telegram) widgetData(s Settings, note string, ts int64) (string, int, int) {
+func (t *Telegram) widgetData(s Settings, note string, ts int64, noQ bool) (string, int, int) {
 	a := t.a
 	type row struct {
 		id, name string
@@ -92,6 +93,9 @@ func (t *Telegram) widgetData(s Settings, note string, ts int64) (string, int, i
 	st := widgetStateT{V: 1, TS: ts, M: clipRunes(note, 60), C: [][]any{}}
 	if !s.TelegramControl {
 		st.RO = 1
+	}
+	if noQ {
+		st.NQ = 1
 	}
 	if d := statDisk(a.m.cfg.RecDir); d != nil && d.Total > 0 {
 		st.D = [2]float64{round1(float64(d.Free) / (1 << 30)), round1(float64(d.Total) / (1 << 30))}
@@ -156,7 +160,7 @@ var w=document.getElementById('w');w.textContent='';if(!S){w.appendChild(E('div'
 S.c.forEach(function(c){
 var r=E('div','r');r.appendChild(E('span','d s'+c[2]));r.appendChild(E('span','n',c[1]));
 if(c[2]==2){var t=E('span','t','');t.setAttribute('data-s',c[3]);r.appendChild(t)}
-if(!S.ro&&c[2]!=3){var q=c[2]==2?'stop':'rec',b=E('button',q=='stop'?'x':'',q=='stop'?L.stop:L.rec),k=q+':'+c[0];b.disabled=!!busy;b.onclick=function(){go(k)};r.appendChild(b)}
+if(!S.ro&&!S.nq&&c[2]!=3){var q=c[2]==2?'stop':'rec',b=E('button',q=='stop'?'x':'',q=='stop'?L.stop:L.rec),k=q+':'+c[0];b.disabled=!!busy;b.onclick=function(){go(k)};r.appendChild(b)}
 w.appendChild(r)});
 if(!S.c.length)w.appendChild(E('div','t',L.none));
 if(S.x)w.appendChild(E('div','t',L.more.replace('{n}',S.x)));
@@ -164,7 +168,7 @@ if(S.d[1]){var u=Math.max(0,Math.min(100,100-S.d[0]/S.d[1]*100)),bar=E('div','ba
 w.appendChild(E('div','f',L.free.replace('{free}',S.d[0]).replace('{total}',S.d[1])))}
 if(S.j[0]+S.j[1])w.appendChild(E('div','t',L.jobs.replace('{run}',S.j[0]).replace('{q}',S.j[1])));
 var f=E('div','f'),m=E('span','',note||(S.ro?L.ro+' · ':'')+(S.ts?L.upd+' '+new Date(S.ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):''));
-f.appendChild(m);var rb=E('button','','⟳');rb.disabled=!!busy;rb.onclick=function(){go('r')};f.appendChild(rb);w.appendChild(f);tick()}
+f.appendChild(m);if(!S.nq){var rb=E('button','','⟳');rb.disabled=!!busy;rb.onclick=function(){go('r')};f.appendChild(rb)}w.appendChild(f);tick()}
 function tick(){var n=Date.now()/1000;document.querySelectorAll('[data-s]').forEach(function(e){e.textContent=D(n-e.getAttribute('data-s'))})}
 S=J(W.chatData);draw();setInterval(tick,1000);
 W.onEvent('chatDataChanged',function(){var o=J(W.chatData);if(o){S=o;draw()}});
@@ -175,6 +179,7 @@ W.onEvent('chatDataChanged',function(){var o=J(W.chatData);if(o){S=o;draw()}});
 type widgetRegistry struct {
 	path string
 	at   map[int64]int64 // chat -> message id of its live dashboard
+	noq  map[int64]bool  // dashboards Telegram accepted only without allow_queries
 	last string          // last pushed state (without ts)
 	push time.Time
 }
@@ -185,13 +190,21 @@ func (t *Telegram) widgetsLoad() {
 	if t.wr != nil {
 		return
 	}
-	t.wr = &widgetRegistry{path: filepath.Join(t.a.m.cfg.DataDir, "telegram_widgets.json"), at: map[int64]int64{}}
+	t.wr = &widgetRegistry{path: filepath.Join(t.a.m.cfg.DataDir, "telegram_widgets.json"), at: map[int64]int64{}, noq: map[int64]bool{}}
 	if b, err := os.ReadFile(t.wr.path); err == nil {
-		m := map[string]int64{}
-		if json.Unmarshal(b, &m) == nil {
-			for k, v := range m {
+		var f struct {
+			At  map[string]int64 `json:"at"`
+			NoQ map[string]bool  `json:"noq"`
+		}
+		if json.Unmarshal(b, &f) == nil {
+			for k, v := range f.At {
 				if id, err := strconv.ParseInt(k, 10, 64); err == nil {
 					t.wr.at[id] = v
+				}
+			}
+			for k, v := range f.NoQ {
+				if id, err := strconv.ParseInt(k, 10, 64); err == nil && v {
+					t.wr.noq[id] = true
 				}
 			}
 		}
@@ -199,27 +212,35 @@ func (t *Telegram) widgetsLoad() {
 }
 
 func (t *Telegram) widgetsSave() { // t.wmu held
-	m := map[string]int64{}
+	f := struct {
+		At  map[string]int64 `json:"at"`
+		NoQ map[string]bool  `json:"noq,omitempty"`
+	}{map[string]int64{}, map[string]bool{}}
 	for k, v := range t.wr.at {
-		m[strconv.FormatInt(k, 10)] = v
+		f.At[strconv.FormatInt(k, 10)] = v
+		if t.wr.noq[k] {
+			f.NoQ[strconv.FormatInt(k, 10)] = true
+		}
 	}
-	b, _ := json.Marshal(m)
+	b, _ := json.Marshal(f)
 	tmp := t.wr.path + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, t.wr.path)
 	}
 }
 
-func (t *Telegram) widgetTrack(chat, msg int64) (old int64) {
+func (t *Telegram) widgetTrack(chat, msg int64, noQ bool) (old int64) {
 	t.widgetsLoad()
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 	old = t.wr.at[chat]
 	t.wr.at[chat] = msg
+	t.wr.noq[chat] = noQ
 	for len(t.wr.at) > widgetMaxTrack { // forget somebody else's: the map is tiny, any entry will do
 		for k := range t.wr.at {
 			if k != chat {
 				delete(t.wr.at, k)
+				delete(t.wr.noq, k)
 				break
 			}
 		}
@@ -235,6 +256,7 @@ func (t *Telegram) widgetUntrack(chat, msg int64) {
 	defer t.wmu.Unlock()
 	if t.wr.at[chat] == msg {
 		delete(t.wr.at, chat)
+		delete(t.wr.noq, chat)
 		t.widgetsSave()
 	}
 }
@@ -281,41 +303,69 @@ func (t *Telegram) widgetsSync(s Settings) {
 	if n == 0 {
 		return
 	}
-	plain, _, _ := t.widgetData(s, "", 0)
+	plain, _, _ := t.widgetData(s, "", 0, false)
 	t.wmu.Lock()
 	if plain == t.wr.last && time.Since(t.wr.push) < widgetHeartbeat {
 		t.wmu.Unlock()
 		return
 	}
 	t.wr.last, t.wr.push = plain, time.Now()
-	targets := map[int64]int64{}
+	targets, noq := map[int64]int64{}, map[int64]bool{}
 	for k, v := range t.wr.at {
-		targets[k] = v
+		targets[k], noq[k] = v, t.wr.noq[k]
 	}
 	t.wmu.Unlock()
-	data, _, _ := t.widgetData(s, "", time.Now().Unix())
+	now := time.Now().Unix()
+	data, _, _ := t.widgetData(s, "", now, false)
+	dataNQ, _, _ := t.widgetData(s, "", now, true)
 	for chat, msg := range targets {
-		t.widgetPushOne(chat, msg, data)
+		if noq[chat] {
+			t.widgetPushOne(chat, msg, dataNQ)
+		} else {
+			t.widgetPushOne(chat, msg, data)
+		}
 	}
 }
 
 // ------------------------------------------------------------ sending & requests
 
-// cmdDashboard sends (or replaces) the dashboard widget of a chat.
+// widgetErrText turns Telegram's widget error codes into something readable.
+func widgetErrText(err error) string {
+	var te *tgError
+	if errors.As(err, &te) {
+		return te.Desc
+	}
+	return err.Error()
+}
+
+// cmdDashboard sends (or replaces) the dashboard widget of a chat. If Telegram
+// refuses INPUT_MEDIA_WIDGET_NOT_ALLOWED, it is tried once more as a display-only
+// widget (no allow_queries); if that fails too, the plain status is shown.
 func (t *Telegram) cmdDashboard(s Settings, chat int64) {
-	data, live, rec := t.widgetData(s, "", time.Now().Unix())
-	var res tgMessage
-	err := t.call(context.Background(), t.token(), "sendWidget", map[string]any{
-		"chat_id": chat, "html": t.widgetHTML(s), "chat_data": data, "allow_queries": true,
-		"caption": t.tr(s, "tg_w_caption", "live", itoa(live), "rec", itoa(rec)),
-	}, &res, 20*time.Second)
+	send := func(noQ bool) (tgMessage, error) {
+		data, live, rec := t.widgetData(s, "", time.Now().Unix(), noQ)
+		var res tgMessage
+		err := t.call(context.Background(), t.token(), "sendWidget", map[string]any{
+			"chat_id": chat, "html": t.widgetHTML(s), "chat_data": data, "allow_queries": !noQ,
+			"caption": t.tr(s, "tg_w_caption", "live", itoa(live), "rec", itoa(rec)),
+		}, &res, 20*time.Second)
+		return res, err
+	}
+	noQ := false
+	res, err := send(false)
+	var te *tgError
+	if errors.As(err, &te) && te.Code == 400 && strings.Contains(te.Desc, "WIDGET_NOT_ALLOWED") {
+		t.a.m.elog.Add(Channel{}, "system", "warn", "telegram: widget with requests refused, retrying display-only", te.Desc)
+		noQ = true
+		res, err = send(true)
+	}
 	if err != nil {
 		t.a.m.elog.Add(Channel{}, "system", "warn", "telegram: sendWidget failed", err.Error())
 		text, k := t.viewStatus(s)
-		_ = t.send(chat, esc(t.tr(s, "tg_w_unavail", "error", err.Error()))+"\n\n"+text, k)
+		_ = t.send(chat, esc(t.tr(s, "tg_w_unavail", "error", widgetErrText(err)))+"\n\n"+text, k)
 		return
 	}
-	if old := t.widgetTrack(chat, res.MessageID); old != 0 && old != res.MessageID {
+	if old := t.widgetTrack(chat, res.MessageID, noQ); old != 0 && old != res.MessageID {
 		_ = t.call(context.Background(), t.token(), "deleteMessage", map[string]any{"chat_id": chat, "message_id": old}, nil, 10*time.Second)
 	}
 }
@@ -356,10 +406,10 @@ func (t *Telegram) onWidgetQuery(s Settings, q *tgWidgetQuery) {
 		answer("")
 		return
 	}
-	data, _, _ := t.widgetData(s, note, time.Now().Unix())
+	data, _, _ := t.widgetData(s, note, time.Now().Unix(), false)
 	answer(data)
 	if note != "" && q.MessageID != 0 { // the stored state too, so reopening the chat shows it
-		plain, _, _ := t.widgetData(s, "", time.Now().Unix())
+		plain, _, _ := t.widgetData(s, "", time.Now().Unix(), false)
 		t.widgetPushOne(q.Chat.ID, q.MessageID, plain)
 	}
 }

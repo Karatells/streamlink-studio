@@ -27,6 +27,7 @@ type fakeTG struct {
 	backlog []tgUpdate
 	batches [][]tgUpdate
 	srv     *httptest.Server
+	reject  func(method string, p map[string]any) string // non-empty: answer with this 400 error
 }
 
 func newFakeTG(t *testing.T) *fakeTG {
@@ -41,6 +42,13 @@ func newFakeTG(t *testing.T) *fakeTG {
 		_ = json.NewDecoder(r.Body).Decode(&p)
 		f.mu.Lock()
 		f.calls = append(f.calls, tgCall{method, p})
+		if f.reject != nil {
+			if d := f.reject(method, p); d != "" {
+				f.mu.Unlock()
+				json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 400, "description": d})
+				return
+			}
+		}
 		var result any = true
 		switch method {
 		case "sendWidget":
