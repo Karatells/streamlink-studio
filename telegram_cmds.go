@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var tgMenu = []string{"status", "channels", "recording", "recordings", "stats", "jobs", "log", "notifications", "health", "notify", "add", "help"}
+var tgMenu = []string{"status", "dashboard", "channels", "recording", "recordings", "stats", "jobs", "log", "notifications", "health", "notify", "add", "help"}
 
 const tgPageSize = 8
 
@@ -60,6 +60,9 @@ func (t *Telegram) handle(u tgUpdate) {
 	if u.Callback != nil {
 		t.onCallback(s, u.Callback)
 	}
+	if u.Widget != nil {
+		t.onWidgetQuery(s, u.Widget)
+	}
 }
 
 func splitCmd(text string) (cmd, arg string) {
@@ -98,7 +101,9 @@ func (t *Telegram) onMessage(s Settings, m *tgMessage) {
 	}
 	cmd, arg := splitCmd(m.Text)
 	text, k := t.run(s, m.Chat.ID, cmd, arg)
-	_ = t.send(m.Chat.ID, text, k)
+	if text != "" {
+		_ = t.send(m.Chat.ID, text, k)
+	}
 }
 
 // run executes a command and returns the reply.
@@ -110,6 +115,9 @@ func (t *Telegram) run(s Settings, chat int64, cmd, arg string) (string, kbd) {
 		return t.tr(s, "tg_whoami", "id", strconv.FormatInt(chat, 10)), nil
 	case "status":
 		return t.viewStatus(s)
+	case "dashboard", "widget":
+		t.cmdDashboard(s, chat)
+		return "", nil
 	case "channels":
 		return t.viewChannels(s)
 	case "recording":

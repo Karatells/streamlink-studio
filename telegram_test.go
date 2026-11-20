@@ -43,6 +43,8 @@ func newFakeTG(t *testing.T) *fakeTG {
 		f.calls = append(f.calls, tgCall{method, p})
 		var result any = true
 		switch method {
+		case "sendWidget":
+			result = map[string]any{"message_id": 4242, "chat": map[string]any{"id": p["chat_id"]}}
 		case "getMe":
 			result = map[string]any{"username": "studio_bot"}
 		case "getUpdates":

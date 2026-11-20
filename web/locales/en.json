@@ -578,5 +578,17 @@
   "mom_msgs": "{count} messages",
   "mom_none": "No chat bursts found ({count} messages analysed).",
   "mom_create": "Create clips",
-  "mom_started": "Cutting {count} clips…"
+  "mom_started": "Cutting {count} clips…",
+  "tg_cmd_dashboard": "Live dashboard widget",
+  "tg_w_caption": "📺 Streamlink Studio · live: {live} · recording: {rec}",
+  "tg_w_rec": "● Record",
+  "tg_w_stop": "■ Stop",
+  "tg_w_none": "No channels yet",
+  "tg_w_free": "{free} GB free of {total} GB",
+  "tg_w_jobs": "Jobs: {run} running, {q} queued",
+  "tg_w_upd": "updated",
+  "tg_w_err": "Request failed",
+  "tg_w_more": "+{n} more channels",
+  "tg_w_ro": "read-only",
+  "tg_w_unavail": "Widgets are not available here ({error}). Showing the usual status instead."
 }

@@ -52,9 +52,10 @@ type tgCallback struct {
 	Data    string     `json:"data"`
 }
 type tgUpdate struct {
-	UpdateID int64       `json:"update_id"`
-	Message  *tgMessage  `json:"message"`
-	Callback *tgCallback `json:"callback_query"`
+	UpdateID int64          `json:"update_id"`
+	Message  *tgMessage     `json:"message"`
+	Callback *tgCallback    `json:"callback_query"`
+	Widget   *tgWidgetQuery `json:"widget_query"`
 }
 
 type tgBtn struct{ T, D, U string }
@@ -106,6 +107,9 @@ type Telegram struct {
 	failed    uint64
 	picks     map[int64]*pickList
 	denied    map[int64]time.Time
+	wmu       sync.Mutex
+	wr        *widgetRegistry
+	noWidget  bool // the API rejected widget_query in allowed_updates
 }
 
 func NewTelegram(a *API) *Telegram {
@@ -201,6 +205,7 @@ func (t *Telegram) setCommands(ctx context.Context, s Settings) {
 // Run polls Telegram while the bot is enabled.
 func (t *Telegram) Run(ctx context.Context) {
 	t.startWorker()
+	go t.RunWidgets(ctx)
 	var offset int64
 	synced := ""
 	for ctx.Err() == nil {
@@ -238,7 +243,7 @@ func (t *Telegram) Run(ctx context.Context) {
 		}
 		var ups []tgUpdate
 		err := t.call(ctx, s.TelegramToken, "getUpdates", map[string]any{"offset": offset, "timeout": t.pollWait,
-			"allowed_updates": []string{"message", "callback_query"}}, &ups, time.Duration(t.pollWait+15)*time.Second)
+			"allowed_updates": t.allowedUpdates()}, &ups, time.Duration(t.pollWait+15)*time.Second)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -246,6 +251,10 @@ func (t *Telegram) Run(ctx context.Context) {
 			t.record(err)
 			var te *tgError
 			switch {
+			case errors.As(err, &te) && te.Code == 400 && strings.Contains(te.Desc, "allowed_updates") && !t.noWidget:
+				t.mu.Lock()
+				t.noWidget = true // an API without widgets: carry on without them
+				t.mu.Unlock()
 			case errors.As(err, &te) && te.Code == 401:
 				synced = ""
 				sleepCtx(ctx, 30*time.Second)
@@ -265,6 +274,15 @@ func (t *Telegram) Run(ctx context.Context) {
 			sleepCtx(ctx, 200*time.Millisecond)
 		}
 	}
+}
+
+func (t *Telegram) allowedUpdates() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.noWidget {
+		return []string{"message", "callback_query"}
+	}
+	return []string{"message", "callback_query", "widget_query"}
 }
 
 func (t *Telegram) safeHandle(u tgUpdate) {
